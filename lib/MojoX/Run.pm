@@ -13,27 +13,18 @@ use Time::HiRes qw(time);
 use POSIX qw(:sys_wait_h);
 use Scalar::Util qw(blessed);
 
+use Mojo::Log;
 use Mojo::IOLoop;
 
 __PACKAGE__->attr(ioloop => sub { Mojo::IOLoop->singleton });
-__PACKAGE__->attr(
-    app => sub {
-        my $self = shift;
 
-        # App in environment
-        return $ENV{MOJO_APP} if ref $ENV{MOJO_APP};
-
-        # Load
-        if (my $e = Mojo::Loader->load($self->app_class)) {
-            die $e if ref $e;
-        }
-
-        return $self->app_class->new;
-    }
-);
+# private logging object...
+my $_log = Mojo::Log->new();
 
 # singleton object instance
 my $_obj = undef;
+
+our $VERSION = '0.10';
 
 =head1 NAME
 
@@ -79,10 +70,6 @@ MojoX::Run - asynchronous external command execution for Mojo
  	}
  );
 
-=cut
-
-our $VERSION = '0.01';
-
 =head1 OBJECT CONSTRUCTOR
 
 =head2 new ()
@@ -112,20 +99,23 @@ sub DESTROY {
     # perform cleanup...
     foreach my $pid (keys %{$self->{_data}}) {
         my $proc = $self->{_data}->{$pid};
+        
+        # kill process (HARD!)
+        kill(9, $pid);
+
+        my $loop = $self->ioloop();
+        next unless (defined $loop);
 
         # drop fds
         if (defined $proc->{id_stdout}) {
-            $self->ioloop()->drop($proc->{id_stdout});
+            $loop->drop($proc->{id_stdout});
         }
         if (defined $proc->{id_stderr}) {
-            $self->ioloop()->drop($proc->{id_stderr});
+            $loop->drop($proc->{id_stderr});
         }
         if (defined $proc->{id_stdin}) {
-            $self->ioloop()->drop($proc->{id_stdin});
+            $loop->drop($proc->{id_stdin});
         }
-
-        # kill process (HARD!)
-        kill(9, $pid);
 
         # fire exit callbacks (if any)
         $self->_checkIfComplete($pid, 1);
@@ -372,7 +362,6 @@ sub stderr_buf_clear {
 Kills process $pid with specified signal. Returns 1 on success, otherwise 0.
 
 =cut
-
 sub kill {
     my ($self, $pid, $signal) = @_;
     $signal = 15 unless (defined $signal);
@@ -385,6 +374,20 @@ sub kill {
         return 0;
     }
     return 1;
+}
+
+=head2 log_level ([$level])
+
+Gets or sets loglevel for private logger instance. See L<Mojo::Log> for additional instructions.
+
+=cut
+sub log_level {
+    my ($self, $level) = @_;
+    if (defined $level) {
+        my $prev_level = $_log->level();
+        $_log->level($level);
+    }
+    return $_log->level();
 }
 
 ##################################################
@@ -420,7 +423,7 @@ sub _spawn {
     }
 
     # time to do the job
-    $self->app->log->debug("Spawning command "
+    $_log->debug("Spawning command "
           . "[timeout: "
           . sprintf("%-.3f seconds]", $o->{exec_timeout})
           . ": $o->{cmd}");
@@ -461,7 +464,7 @@ sub _spawn {
         $self->{_error} = "Error starting external command: $!";
         return 0;
     }
-    $self->app->log->debug("Program spawned as pid $pid.");
+    $_log->debug("Program spawned as pid $pid.");
     $proc->{pid} = $pid;
 
     # make handles non-blocking...
@@ -471,7 +474,7 @@ sub _spawn {
 
     # exec timeout
     if (defined $o->{exec_timeout} && $o->{exec_timeout} > 0) {
-        $self->app->log->debug("Setting execution timeout to "
+        $_log->debug("Setting execution timeout to "
               . sprintf("%-.3f seconds.", $o->{exec_timeout}));
         my $timer =
           $self->ioloop()
@@ -529,18 +532,18 @@ sub _read_cb {
 
         # do we have callback?
         if (defined $proc->{stdout_cb}) {
-            $self->app->log->debug(
+            $_log->debug(
                 "[process $pid]: Invoking stdout callback.");
             eval { $proc->{stdout_cb}->($pid, $chunk) };
             if ($@) {
-                $self->app->log->error(
+                $_log->error(
                     "[process $pid]: Exception in stdout_cb: $@");
             }
         }
         else {
 
             # append to buffer
-            $self->app->log->debug(
+            $_log->debug(
                 "[process $pid]: Appending $len bytes to stdout buffer.");
             $proc->{buf_stdout} .= $chunk;
         }
@@ -549,24 +552,24 @@ sub _read_cb {
 
         # do we have callback?
         if (defined $proc->{stderr_cb}) {
-            $self->app->log->debug(
+            $_log->debug(
                 "[process $pid]: Invoking stderr callback.");
             eval { $proc->{stderr_cb}->($pid, $chunk) };
             if ($@) {
-                $self->app->log->error(
+                $_log->error(
                     "[process $pid]: Exception in stderr_cb: $@");
             }
         }
         else {
 
             # append to buffer
-            $self->app->log->debug(
+            $_log->debug(
                 "[process $pid]: Appending $len bytes to stderr buffer.");
             $proc->{buf_stderr} .= $chunk;
         }
     }
     else {
-        $self->app->log->warn("Got data from unmanaged handle $id; dropping");
+        $_log->warn("Got data from unmanaged handle $id; dropping");
         return 0;
     }
 }
@@ -580,18 +583,18 @@ sub _hup_cb {
 
     if (defined $proc->{id_stdout} && $proc->{id_stdout} eq $id) {
         $proc->{id_stdout} = undef;
-        $self->app->log->debug("[process $pid]: stdout closed.");
+        $_log->debug("[process $pid]: stdout closed.");
     }
     elsif (defined $proc->{id_stderr} && $proc->{id_stderr} eq $id) {
         $proc->{id_stderr} = undef;
-        $self->app->log->debug("[process $pid]: stderr closed.");
+        $_log->debug("[process $pid]: stderr closed.");
     }
     elsif (defined $proc->{id_stdin} && $proc->{id_stdin} eq $id) {
         $proc->{id_stdin} = undef;
-        $self->app->log->debug("[process $pid]: stdin closed.");
+        $_log->debug("[process $pid]: stdin closed.");
     }
     else {
-        $self->app->log->warn("Got HUP for unmanaged handle $id; ignoring.");
+        $_log->warn("Got HUP for unmanaged handle $id; ignoring.");
         return 0;
     }
 
@@ -617,7 +620,7 @@ sub _checkIfComplete {
         && !defined $proc->{id_stdout}
         && !defined $proc->{id_stderr})
     {
-        $self->app->log->debug(
+        $_log->debug(
             "[process $pid]: All streams closed, process execution complete.")
           unless ($force);
         $proc->{time_duration_total} = time() - $proc->{time_started};
@@ -641,15 +644,15 @@ sub _checkIfComplete {
             };
 
             # safely invoke callback
-            $self->app->log->debug("[process $pid]: invoking exit_cb");
+            $_log->debug("[process $pid]: invoking exit_cb");
             eval { $proc->{exit_cb}->($pid, $cb_d); };
             if ($@) {
-                $self->app->log->error(
+                $_log->error(
                     "[process $pid]: Error running exit_cb: $@");
             }
         }
         else {
-            $self->app->log->error("[process $pid]: No exit_cb callback!");
+            $_log->error("[process $pid]: No exit_cb callback!");
         }
 
         # destroy process structure
@@ -680,13 +683,13 @@ sub _timeout_cb {
     # is process still alive?
     return 0 unless (CORE::kill(0, $pid));
 
-    $self->app->log->debug("[process $pid]: Execution timeout ("
+    $_log->debug("[process $pid]: Execution timeout ("
           . sprintf("%-.3f seconds).", $proc->{timeout})
           . " Killing process.");
 
     # kill the motherfucker!
     unless (CORE::kill(9, $pid)) {
-        $self->app->log->warn("[process $pid]: Unable to kill process: $!");
+        $_log->warn("[process $pid]: Unable to kill process: $!");
     }
 
     $proc->{error} = "Execution timeout.";
@@ -789,13 +792,13 @@ sub _procCleanup {
     my $proc = $self->_getProcStruct($pid);
     unless (defined $proc) {
         no warnings;
-        $self->app->log->warn(
+        $_log->warn(
             "Untracked process pid $pid exited with exit status $exit_val by signal $signum, core: $core."
         );
         return 0;
     }
 
-    $self->app->log->debug(
+    $_log->debug(
         "[process $pid]: exited with exit status: $exit_val by signal $signum"
           . (($core) ? "with core dump" : "")
           . '.');
@@ -814,7 +817,7 @@ sub _procCleanup {
 
     # destroy timer if it was defined
     if (defined $proc->{id_timeout}) {
-        $self->app->log->debug(
+        $_log->debug(
             "[process $pid]: Removing timeout handler $proc->{id_timeout}.");
         $self->ioloop()->drop($proc->{id_timeout});
         $proc->{id_timeout} = undef;
@@ -827,7 +830,7 @@ sub _procCleanup {
 sub _sig_chld {
     my ($self) = @_;
 
-    # $self->app->log->debug('SIGCHLD hander startup: ' . join(", ", @_));
+    # $_log->debug('SIGCHLD hander startup: ' . join(", ", @_));
     my $i = 0;
     while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
         $i++;
@@ -838,7 +841,7 @@ sub _sig_chld {
         # do process cleanup
         $self->_procCleanup($pid, $exit_val, $signum, $core);
     }
-    $self->app->log->debug("SIGCHLD handler cleaned up after $i process(es).")
+    $_log->debug("SIGCHLD handler cleaned up after $i process(es).")
       if ($i > 0);
 }
 
