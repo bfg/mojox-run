@@ -1,16 +1,46 @@
 MojoX-Run
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+SYNOPSIS
 
-A README file is required for CPAN modules since CPAN extracts the README
-file from a module distribution so that people browsing the archive
-can use it to get an idea of the module's uses. It is usually a good idea
-to provide version information here so that people can decide whether
-fixes for the module are worth downloading.
+ # create executor object
+ # NOTE: new *ALWAYS* returns singleton object!
+ my $executor = MojoX::Run->new()
+ 
+ # simple usage
+ my $pid = $executor->spawn(
+ 	cmd => "ping -W 2 -c 5 host.example.org",
+ 	exit_cb => sub {
+ 		my ($pid, $res) = @_;
+ 		print "Ping finished with exit status $res->{exit_val}.\n";
+ 		print "\tSTDOUT:\n$res->{stdout}\n";
+ 		print "\tSTDERR:\n$res->{stderr}\n";
+ 	}
+ );
+ # check for injuries
+ unless ($pid) {
+ 	print "Command startup failed: ", $executor->error(), "\n";
+ }
+ 
+ # more complex example...
+ my $pid2 = $executor->spawn(
+ 	cmd => 'ping host.example.org',
+ 	stdin_cb => sub {
+ 		my ($pid, $chunk) = @_;
+ 		print "STDOUT $pid: '$chunk'\n"
+ 	},
+ 	# ignore stderr
+ 	stderr_cb => sub {},
+ 	exit_cb => sub {
+ 		my ($pid, $res) = @_;
+ 		print "Process $res->{cmd} [pid: $pid] finished after $res->{time_duration_exec} second(s).\n";
+ 		print "Exit status: $res->{exit_status}";
+ 		print " by signal $res->{exit_signal}" if ($res->{exit_signal});
+ 		print "with coredump " if ($res->{exit_core});
+ 		print "\n";
+ 	}
+ );
 
+See perldoc MojoX::Run for complete instructions.
 
 INSTALLATION
 
