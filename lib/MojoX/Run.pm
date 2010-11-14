@@ -15,7 +15,7 @@ use Scalar::Util qw(blessed);
 
 use Mojo::IOLoop;
 
-__PACKAGE__->attr( ioloop => sub { Mojo::IOLoop->singleton } );
+__PACKAGE__->attr(ioloop => sub { Mojo::IOLoop->singleton });
 __PACKAGE__->attr(
     app => sub {
         my $self = shift;
@@ -24,7 +24,7 @@ __PACKAGE__->attr(
         return $ENV{MOJO_APP} if ref $ENV{MOJO_APP};
 
         # Load
-        if ( my $e = Mojo::Loader->load( $self->app_class ) ) {
+        if (my $e = Mojo::Loader->load($self->app_class)) {
             die $e if ref $e;
         }
 
@@ -93,13 +93,13 @@ instance.
 =cut
 
 sub new {
-    return $_obj if ( defined $_obj );
+    return $_obj if (defined $_obj);
 
     my $proto = shift;
     my $class = ref($proto) || $proto;
 
     my $self = $class->SUPER::new();
-    bless( $self, $class );
+    bless($self, $class);
     $self->_init();
 
     $_obj = $self;
@@ -110,28 +110,28 @@ sub DESTROY {
     my ($self) = @_;
 
     # perform cleanup...
-    foreach my $pid ( keys %{ $self->{_data} } ) {
+    foreach my $pid (keys %{$self->{_data}}) {
         my $proc = $self->{_data}->{$pid};
 
         # drop fds
-        if ( defined $proc->{id_stdout} ) {
-            $self->ioloop()->drop( $proc->{id_stdout} );
+        if (defined $proc->{id_stdout}) {
+            $self->ioloop()->drop($proc->{id_stdout});
         }
-        if ( defined $proc->{id_stderr} ) {
-            $self->ioloop()->drop( $proc->{id_stderr} );
+        if (defined $proc->{id_stderr}) {
+            $self->ioloop()->drop($proc->{id_stderr});
         }
-        if ( defined $proc->{id_stdin} ) {
-            $self->ioloop()->drop( $proc->{id_stdin} );
+        if (defined $proc->{id_stdin}) {
+            $self->ioloop()->drop($proc->{id_stdin});
         }
 
         # kill process (HARD!)
-        kill( 9, $pid );
+        kill(9, $pid);
 
         # fire exit callbacks (if any)
-        $self->_checkIfComplete( $pid, 1 );
+        $self->_checkIfComplete($pid, 1);
 
         # remove struct
-        delete( $self->{_data}->{$pid} );
+        delete($self->{_data}->{$pid});
     }
 
     # disable sigchld hander
@@ -210,16 +210,16 @@ Returns non-zero process identifier (pid) on success, otherwise 0 and sets error
 =cut
 
 sub spawn {
-    my ( $self, %opt ) = @_;
-    unless ( defined $self && blessed($self) && $self->isa(__PACKAGE__) ) {
+    my ($self, %opt) = @_;
+    unless (defined $self && blessed($self) && $self->isa(__PACKAGE__)) {
         my $obj = __PACKAGE__->new();
         return $obj->spawn(%opt);
     }
     $self->{_error} = '';
 
     # normalize and validate run parameters...
-    my $o = $self->_getRunStruct( \%opt );
-    return 0 unless ( $self->_validateRunStruct($o) );
+    my $o = $self->_getRunStruct(\%opt);
+    return 0 unless ($self->_validateRunStruct($o));
 
     # start exec!
     return $self->_spawn($o);
@@ -236,37 +236,38 @@ Returns 1 on success, otherwise 0 and sets error.
 =cut
 
 sub stdin_write {
-    my ( $self, $pid, $data, $cb ) = @_;
+    my ($self, $pid, $data, $cb) = @_;
     my $proc = $self->_getProcStruct($pid);
-    unless ( defined $pid && defined $proc ) {
+    unless (defined $pid && defined $proc) {
         $self->{_error} =
-"Unable to write to process pid '$pid' stdin: Unamanaged process pid or process stdin is already closed.";
+          "Unable to write to process pid '$pid' stdin: Unamanaged process pid or process stdin is already closed.";
         return 0;
     }
 
     # is stdin still opened?
-    unless ( defined $proc->{id_stdin} ) {
+    unless (defined $proc->{id_stdin}) {
         $self->{_error} = "STDIN handle is already closed.";
         return 0;
     }
 
     # do we have custom callback?
-    if ( defined $cb ) {
-        unless ( ref($cb) eq 'CODE' ) {
+    if (defined $cb) {
+        unless (ref($cb) eq 'CODE') {
             $self->{_error} =
               "Optional second argument must be code reference.";
             return 0;
         }
     }
     else {
+
         # do we have stdin callback?
-        if ( defined $proc->{stdin_cb} && ref( $proc->{stdin_cb} ) eq 'CODE' ) {
+        if (defined $proc->{stdin_cb} && ref($proc->{stdin_cb}) eq 'CODE') {
             $cb = $proc->{stdin_cb};
         }
     }
 
     # write data
-    $self->ioloop()->write( $proc->{id_stdin}, $data, $cb );
+    $self->ioloop()->write($proc->{id_stdin}, $data, $cb);
     return 1;
 }
 
@@ -280,8 +281,8 @@ Returns undef on error and sets error message.
 =cut
 
 sub stdout_cb {
-    my ( $self, $pid, $cb ) = @_;
-    return $self->__handle_cb( $pid, 'stdout', $cb );
+    my ($self, $pid, $cb) = @_;
+    return $self->__handle_cb($pid, 'stdout', $cb);
 }
 
 =head2 stderr_cb ($pid [, $cb])
@@ -294,8 +295,8 @@ Returns undef on error and sets error message.
 =cut
 
 sub stderr_cb {
-    my ( $self, $pid, $cb ) = @_;
-    return $self->__handle_cb( $pid, 'stderr', $cb );
+    my ($self, $pid, $cb) = @_;
+    return $self->__handle_cb($pid, 'stderr', $cb);
 }
 
 =head2 stdin_cb ($pid [, $cb])
@@ -308,8 +309,8 @@ Returns undef on error and sets error message.
 =cut
 
 sub stdin_cb {
-    my ( $self, $pid, $cb ) = @_;
-    return $self->__handle_cb( $pid, 'stdin', $cb );
+    my ($self, $pid, $cb) = @_;
+    return $self->__handle_cb($pid, 'stdin', $cb);
 }
 
 =head2 stdout_buf ($pid)
@@ -319,10 +320,10 @@ Returns contents of stdout buffer for process $pid on success, otherwise undef.
 =cut
 
 sub stdout_buf {
-    my ( $self, $pid, $clear ) = @_;
-    $clear = 0 unless ( defined $clear );
+    my ($self, $pid, $clear) = @_;
+    $clear = 0 unless (defined $clear);
     my $proc = $self->_getProcStruct($pid);
-    return undef unless ( defined $proc );
+    return undef unless (defined $proc);
 
     # clear buffer?
     $proc->{buf_stdout} = '' if ($clear);
@@ -336,7 +337,7 @@ Clears stdout buffer for process $pid. Returns empty string on success, otherwis
 =cut
 
 sub stdout_buf_clear {
-    return shift->stdout_buf( $_[0], 1 );
+    return shift->stdout_buf($_[0], 1);
 }
 
 =head2 stderr_buf ($pid)
@@ -346,10 +347,10 @@ Returns contents of stderr buffer for process $pid on success, otherwise undef.
 =cut
 
 sub stderr_buf {
-    my ( $self, $pid, $clear ) = @_;
-    $clear = 0 unless ( defined $clear );
+    my ($self, $pid, $clear) = @_;
+    $clear = 0 unless (defined $clear);
     my $proc = $self->_getProcStruct($pid);
-    return undef unless ( defined $proc );
+    return undef unless (defined $proc);
 
     # clear buffer?
     $proc->{buf_stderr} = '' if ($clear);
@@ -363,7 +364,7 @@ Clears stderr buffer for process $pid. Returns empty string on success, otherwis
 =cut
 
 sub stderr_buf_clear {
-    return shift->stderr_buf( $_[0], 1 );
+    return shift->stderr_buf($_[0], 1);
 }
 
 =head2 kill ($pid [, $signal = 15])
@@ -373,13 +374,13 @@ Kills process $pid with specified signal. Returns 1 on success, otherwise 0.
 =cut
 
 sub kill {
-    my ( $self, $pid, $signal ) = @_;
-    $signal = 15 unless ( defined $signal );
+    my ($self, $pid, $signal) = @_;
+    $signal = 15 unless (defined $signal);
     my $proc = $self->_getProcStruct($pid);
-    return 0 unless ( defined $proc );
+    return 0 unless (defined $proc);
 
     # kill the process...
-    unless ( kill( $signal, $pid ) ) {
+    unless (kill($signal, $pid)) {
         $self->{_error} = "Unable to send signal $signal to process $pid: $!";
         return 0;
     }
@@ -391,38 +392,38 @@ sub kill {
 ##################################################
 
 sub __handle_cb {
-    my ( $self, $pid, $name, $cb ) = @_;
+    my ($self, $pid, $name, $cb) = @_;
     my $proc = $self->_getProcStruct($pid);
-    return undef unless ( defined $proc );
+    return undef unless (defined $proc);
 
     # should we set another callback?
-    if ( defined $cb ) {
-        unless ( ref($cb) eq 'CODE' ) {
+    if (defined $cb) {
+        unless (ref($cb) eq 'CODE') {
             $self->{_error} = "Second argument must be code reference.";
             return undef;
         }
 
         # apply callback
-        $proc->{ $name . '_cb' } = $cb;
+        $proc->{$name . '_cb'} = $cb;
     }
 
     # return it...
-    return $proc->{ $name . '_cb' };
+    return $proc->{$name . '_cb'};
 }
 
 sub _spawn {
-    my ( $self, $o ) = @_;
-    unless ( defined $o && ref($o) eq 'HASH' ) {
+    my ($self, $o) = @_;
+    unless (defined $o && ref($o) eq 'HASH') {
         $self->{_error} =
           "Invalid spawning options. THIS IS A " . __PACKAGE__ . ' BUG!!!';
         return 0;
     }
 
     # time to do the job
-    $self->app->log->debug( "Spawning command "
+    $self->app->log->debug("Spawning command "
           . "[timeout: "
-          . sprintf( "%-.3f seconds]", $o->{exec_timeout} )
-          . ": $o->{cmd}" );
+          . sprintf("%-.3f seconds]", $o->{exec_timeout})
+          . ": $o->{cmd}");
 
     # prepare stdio handles
     my $stdin  = IO::Handle->new();
@@ -436,10 +437,10 @@ sub _spawn {
         cmd          => $o->{cmd},
         running      => 1,
         error        => undef,
-        stdin_cb  => ( $o->{stdin_cb} )  ? $o->{stdin_cb}  : undef,
-        stdout_cb => ( $o->{stdout_cb} ) ? $o->{stdout_cb} : undef,
-        stderr_cb => ( $o->{stderr_cb} ) ? $o->{stderr_cb} : undef,
-        exit_cb   => ( $o->{exit_cb} )   ? $o->{exit_cb}   : undef,
+        stdin_cb  => ($o->{stdin_cb})  ? $o->{stdin_cb}  : undef,
+        stdout_cb => ($o->{stdout_cb}) ? $o->{stdout_cb} : undef,
+        stderr_cb => ($o->{stderr_cb}) ? $o->{stderr_cb} : undef,
+        exit_cb   => ($o->{exit_cb})   ? $o->{exit_cb}   : undef,
         timeout   => $o->{exec_timeout},
         buf_stdout => '',
         buf_stderr => '',
@@ -451,12 +452,12 @@ sub _spawn {
 
     # spawn command
     my $pid = undef;
-    eval { $pid = open3( $stdin, $stdout, $stderr, $o->{cmd} ) };
+    eval { $pid = open3($stdin, $stdout, $stderr, $o->{cmd}) };
     if ($@) {
         $self->{_error} = "Exception while starting command '$o->{cmd}': $@";
         return 0;
     }
-    unless ( defined $pid && $pid > 0 ) {
+    unless (defined $pid && $pid > 0) {
         $self->{_error} = "Error starting external command: $!";
         return 0;
     }
@@ -469,12 +470,12 @@ sub _spawn {
     $stderr->blocking(0);
 
     # exec timeout
-    if ( defined $o->{exec_timeout} && $o->{exec_timeout} > 0 ) {
-        $self->app->log->debug( "Setting execution timeout to "
-              . sprintf( "%-.3f seconds.", $o->{exec_timeout} ) );
+    if (defined $o->{exec_timeout} && $o->{exec_timeout} > 0) {
+        $self->app->log->debug("Setting execution timeout to "
+              . sprintf("%-.3f seconds.", $o->{exec_timeout}));
         my $timer =
           $self->ioloop()
-          ->timer( $o->{exec_timeout}, sub { _timeout_cb( $self, $pid ) }, );
+          ->timer($o->{exec_timeout}, sub { _timeout_cb($self, $pid) },);
 
         # save timer
         $proc->{id_timeout} = $timer;
@@ -483,21 +484,21 @@ sub _spawn {
     # add them to ioloop
     my $id_stdout = $self->ioloop()->connect(
         socket   => $stdout,
-        on_error => sub { _error_cb( $self, $pid, @_ ) },
-        on_hup   => sub { _hup_cb( $self, $pid, @_ ) },
-        on_read  => sub { _read_cb( $self, $pid, @_ ) },
+        on_error => sub { _error_cb($self, $pid, @_) },
+        on_hup   => sub { _hup_cb($self, $pid, @_) },
+        on_read  => sub { _read_cb($self, $pid, @_) },
     );
     my $id_stderr = $self->ioloop()->connect(
         socket   => $stderr,
-        on_error => sub { _error_cb( $self, $pid, @_ ) },
-        on_hup   => sub { _hup_cb( $self, $pid, @_ ) },
-        on_read  => sub { _read_cb( $self, $pid, @_ ) },
+        on_error => sub { _error_cb($self, $pid, @_) },
+        on_hup   => sub { _hup_cb($self, $pid, @_) },
+        on_read  => sub { _read_cb($self, $pid, @_) },
     );
     my $id_stdin = $self->ioloop()->connect(
         socket   => $stdin,
-        on_error => sub { _error_cb( $self, $pid, @_ ) },
-        on_hup   => sub { _hup_cb( $self, $pid, @_ ) },
-        on_read  => sub { _read_cb( $self, $pid, @_ ) },
+        on_error => sub { _error_cb($self, $pid, @_) },
+        on_hup   => sub { _hup_cb($self, $pid, @_) },
+        on_read  => sub { _read_cb($self, $pid, @_) },
     );
 
     # save loop fd ids
@@ -512,24 +513,25 @@ sub _spawn {
 }
 
 sub _read_cb {
-    my ( $self, $pid, $loop, $id, $chunk ) = @_;
+    my ($self, $pid, $loop, $id, $chunk) = @_;
     my $len = 0;
-    $len = length($chunk) if ( defined $chunk );
+    $len = length($chunk) if (defined $chunk);
 
     # no data?
-    return 0 unless ( $len > 0 );
+    return 0 unless ($len > 0);
 
     # get process struct...
     my $proc = $self->_getProcStruct($pid);
-    return 0 unless ( defined $proc );
+    return 0 unless (defined $proc);
 
     # id can be stdout or stderr (stdin is write-only)
-    if ( defined $proc->{id_stdout} && $proc->{id_stdout} eq $id ) {
+    if (defined $proc->{id_stdout} && $proc->{id_stdout} eq $id) {
 
         # do we have callback?
-        if ( defined $proc->{stdout_cb} ) {
-            $self->app->log->debug("[process $pid]: Invoking stdout callback.");
-            eval { $proc->{stdout_cb}->( $pid, $chunk ) };
+        if (defined $proc->{stdout_cb}) {
+            $self->app->log->debug(
+                "[process $pid]: Invoking stdout callback.");
+            eval { $proc->{stdout_cb}->($pid, $chunk) };
             if ($@) {
                 $self->app->log->error(
                     "[process $pid]: Exception in stdout_cb: $@");
@@ -543,12 +545,13 @@ sub _read_cb {
             $proc->{buf_stdout} .= $chunk;
         }
     }
-    elsif ( defined $proc->{id_stderr} && $proc->{id_stderr} eq $id ) {
+    elsif (defined $proc->{id_stderr} && $proc->{id_stderr} eq $id) {
 
         # do we have callback?
-        if ( defined $proc->{stderr_cb} ) {
-            $self->app->log->debug("[process $pid]: Invoking stderr callback.");
-            eval { $proc->{stderr_cb}->( $pid, $chunk ) };
+        if (defined $proc->{stderr_cb}) {
+            $self->app->log->debug(
+                "[process $pid]: Invoking stderr callback.");
+            eval { $proc->{stderr_cb}->($pid, $chunk) };
             if ($@) {
                 $self->app->log->error(
                     "[process $pid]: Exception in stderr_cb: $@");
@@ -569,21 +572,21 @@ sub _read_cb {
 }
 
 sub _hup_cb {
-    my ( $self, $pid, $loop, $id ) = @_;
+    my ($self, $pid, $loop, $id) = @_;
 
     # get process structure
     my $proc = $self->_getProcStruct($pid);
-    return 0 unless ( defined $proc );
+    return 0 unless (defined $proc);
 
-    if ( defined $proc->{id_stdout} && $proc->{id_stdout} eq $id ) {
+    if (defined $proc->{id_stdout} && $proc->{id_stdout} eq $id) {
         $proc->{id_stdout} = undef;
         $self->app->log->debug("[process $pid]: stdout closed.");
     }
-    elsif ( defined $proc->{id_stderr} && $proc->{id_stderr} eq $id ) {
+    elsif (defined $proc->{id_stderr} && $proc->{id_stderr} eq $id) {
         $proc->{id_stderr} = undef;
         $self->app->log->debug("[process $pid]: stderr closed.");
     }
-    elsif ( defined $proc->{id_stdin} && $proc->{id_stdin} eq $id ) {
+    elsif (defined $proc->{id_stdin} && $proc->{id_stdin} eq $id) {
         $proc->{id_stdin} = undef;
         $self->app->log->debug("[process $pid]: stdin closed.");
     }
@@ -600,19 +603,19 @@ sub _hup_cb {
 }
 
 sub _checkIfComplete {
-    my ( $self, $pid, $force ) = @_;
-    $force = 0 unless ( defined $force );
+    my ($self, $pid, $force) = @_;
+    $force = 0 unless (defined $force);
 
     # get process structure
     my $proc = $self->_getProcStruct($pid);
-    return 0 unless ( defined $proc );
+    return 0 unless (defined $proc);
 
     # complete?!
-    if ( $force
+    if ($force
         || !$proc->{running}
         && !defined $proc->{id_stdin}
         && !defined $proc->{id_stdout}
-        && !defined $proc->{id_stderr} )
+        && !defined $proc->{id_stderr})
     {
         $self->app->log->debug(
             "[process $pid]: All streams closed, process execution complete.")
@@ -620,11 +623,11 @@ sub _checkIfComplete {
         $proc->{time_duration_total} = time() - $proc->{time_started};
 
         # fire exit callback!
-        if ( defined $proc->{exit_cb} && ref( $proc->{exit_cb} ) eq 'CODE' ) {
+        if (defined $proc->{exit_cb} && ref($proc->{exit_cb}) eq 'CODE') {
 
             # prepare callback structure
             my $cb_d = {
-                cmd => ( ref( $proc->{cmd} ) ) ? "coderef" : $proc->{cmd},
+                cmd => (ref($proc->{cmd})) ? "coderef" : $proc->{cmd},
                 exit_status         => $proc->{exit_val},
                 exit_signal         => $proc->{exit_signal},
                 exit_core           => $proc->{exit_core},
@@ -639,7 +642,7 @@ sub _checkIfComplete {
 
             # safely invoke callback
             $self->app->log->debug("[process $pid]: invoking exit_cb");
-            eval { $proc->{exit_cb}->( $pid, $cb_d ); };
+            eval { $proc->{exit_cb}->($pid, $cb_d); };
             if ($@) {
                 $self->app->log->error(
                     "[process $pid]: Error running exit_cb: $@");
@@ -655,8 +658,8 @@ sub _checkIfComplete {
 }
 
 sub _destroyProcStruct {
-    my ( $self, $pid ) = @_;
-    delete( $self->{_data}->{$pid} );
+    my ($self, $pid) = @_;
+    delete($self->{_data}->{$pid});
 }
 
 sub _error_cb {
@@ -664,25 +667,25 @@ sub _error_cb {
 }
 
 sub _timeout_cb {
-    my ( $self, $pid ) = @_;
+    my ($self, $pid) = @_;
     my $proc = $self->_getProcStruct($pid);
-    return 0 unless ( defined $proc );
+    return 0 unless (defined $proc);
 
     # drop timer (can't hurt...)
-    if ( defined $proc->{id_timeout} ) {
-        $self->ioloop()->drop( $proc->{id_timeout} );
+    if (defined $proc->{id_timeout}) {
+        $self->ioloop()->drop($proc->{id_timeout});
         $proc->{id_timeout} = undef;
     }
 
     # is process still alive?
-    return 0 unless ( CORE::kill( 0, $pid ) );
+    return 0 unless (CORE::kill(0, $pid));
 
-    $self->app->log->debug( "[process $pid]: Execution timeout ("
-          . sprintf( "%-.3f seconds).", $proc->{timeout} )
-          . " Killing process." );
+    $self->app->log->debug("[process $pid]: Execution timeout ("
+          . sprintf("%-.3f seconds).", $proc->{timeout})
+          . " Killing process.");
 
     # kill the motherfucker!
-    unless ( CORE::kill( 9, $pid ) ) {
+    unless (CORE::kill(9, $pid)) {
         $self->app->log->warn("[process $pid]: Unable to kill process: $!");
     }
 
@@ -702,19 +705,19 @@ sub _init {
     $self->{_data} = {};
 
     # install SIGCHLD handler
-    $SIG{'CHLD'} = sub { _sig_chld( $self, @_ ) };
+    $SIG{'CHLD'} = sub { _sig_chld($self, @_) };
 }
 
 sub _getProcStruct {
-    my ( $self, $pid ) = @_;
+    my ($self, $pid) = @_;
     no warnings;
     my $err = "[process $pid]: Unable to get process data structure: ";
-    unless ( defined $pid ) {
+    unless (defined $pid) {
         $self->{_error} = $err . "Undefined pid.";
         return undef;
     }
-    unless ( exists( $self->{_data}->{$pid} )
-        && defined $self->{_data}->{$pid} )
+    unless (exists($self->{_data}->{$pid})
+        && defined $self->{_data}->{$pid})
     {
         $self->{_error} = $err . "Non-managed process pid: $pid";
         return undef;
@@ -724,7 +727,7 @@ sub _getProcStruct {
 }
 
 sub _getRunStruct {
-    my ( $self, $opt ) = @_;
+    my ($self, $opt) = @_;
     my $s = {
         cmd          => undef,
         stdout_cb    => undef,
@@ -736,7 +739,7 @@ sub _getRunStruct {
 
     # apply user defined vars...
     map {
-        if ( exists( $s->{$_} ) )
+        if (exists($s->{$_}))
         {
             $s->{$_} = $opt->{$_};
         }
@@ -746,28 +749,30 @@ sub _getRunStruct {
 }
 
 sub _validateRunStruct {
-    my ( $self, $s ) = @_;
+    my ($self, $s) = @_;
 
     # command?
-    unless ( defined $s->{cmd} && length( $s->{cmd} ) > 0 ) {
+    unless (defined $s->{cmd} && length($s->{cmd}) > 0) {
         $self->{_error} = "Undefined command.";
         return 0;
     }
-    if ( ref( $s->{cmd} ) ne '' ) {
+    if (ref($s->{cmd}) ne '') {
         $self->{_error} = "Command must be pure scalar.";
         return 0;
     }
 
     # callbacks...
-    if ( defined $s->{stdout_cb} && ref( $s->{stdout_cb} ) ne 'CODE' ) {
-        $self->{_error} = "STDOUT callback defined, but is not code reference.";
+    if (defined $s->{stdout_cb} && ref($s->{stdout_cb}) ne 'CODE') {
+        $self->{_error} =
+          "STDOUT callback defined, but is not code reference.";
         return 0;
     }
-    if ( defined $s->{stderr_cb} && ref( $s->{stderr_cb} ) ne 'CODE' ) {
-        $self->{_error} = "STDERR callback defined, but is not code reference.";
+    if (defined $s->{stderr_cb} && ref($s->{stderr_cb}) ne 'CODE') {
+        $self->{_error} =
+          "STDERR callback defined, but is not code reference.";
         return 0;
     }
-    if ( defined $s->{exit_cb} && ref( $s->{exit_cb} ) ne 'CODE' ) {
+    if (defined $s->{exit_cb} && ref($s->{exit_cb}) ne 'CODE') {
         $self->{_error} =
           "Process exit_cb callback defined, but is not code reference.";
         return 0;
@@ -780,20 +785,20 @@ sub _validateRunStruct {
 }
 
 sub _procCleanup {
-    my ( $self, $pid, $exit_val, $signum, $core ) = @_;
+    my ($self, $pid, $exit_val, $signum, $core) = @_;
     my $proc = $self->_getProcStruct($pid);
-    unless ( defined $proc ) {
+    unless (defined $proc) {
         no warnings;
         $self->app->log->warn(
-"Untracked process pid $pid exited with exit status $exit_val by signal $signum, core: $core."
+            "Untracked process pid $pid exited with exit status $exit_val by signal $signum, core: $core."
         );
         return 0;
     }
 
     $self->app->log->debug(
         "[process $pid]: exited with exit status: $exit_val by signal $signum"
-          . ( ($core) ? "with core dump" : "" )
-          . '.' );
+          . (($core) ? "with core dump" : "")
+          . '.');
 
     $proc->{exit_val}    = $exit_val;
     $proc->{exit_signal} = $signum;
@@ -808,10 +813,10 @@ sub _procCleanup {
     $proc->{running} = 0;
 
     # destroy timer if it was defined
-    if ( defined $proc->{id_timeout} ) {
+    if (defined $proc->{id_timeout}) {
         $self->app->log->debug(
             "[process $pid]: Removing timeout handler $proc->{id_timeout}.");
-        $self->ioloop()->drop( $proc->{id_timeout} );
+        $self->ioloop()->drop($proc->{id_timeout});
         $proc->{id_timeout} = undef;
     }
 
@@ -824,17 +829,17 @@ sub _sig_chld {
 
     # $self->app->log->debug('SIGCHLD hander startup: ' . join(", ", @_));
     my $i = 0;
-    while ( ( my $pid = waitpid( -1, WNOHANG ) ) > 0 ) {
+    while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
         $i++;
         my $exit_val = $? >> 8;
         my $signum   = $? & 127;
         my $core     = $? & 128;
 
         # do process cleanup
-        $self->_procCleanup( $pid, $exit_val, $signum, $core );
+        $self->_procCleanup($pid, $exit_val, $signum, $core);
     }
     $self->app->log->debug("SIGCHLD handler cleaned up after $i process(es).")
-      if ( $i > 0 );
+      if ($i > 0);
 }
 
 =head1 AUTHOR
