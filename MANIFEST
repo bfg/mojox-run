@@ -3,7 +3,8 @@ MANIFEST
 Makefile.PL
 README
 lib/MojoX/Run.pm
+lib/MojoX/HandleRun.pm
+lib/MojoX/_Open3.pm
 t/00-load.t
 t/manifest.t
-t/pod-coverage.t
 t/pod.t
