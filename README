@@ -40,6 +40,24 @@ SYNOPSIS
  	}
  );
 
+ # even fancier usage: spawn coderef
+ my $pid3 = $executor->spawn(
+ 	cmd => sub {
+ 		for (my $i = 0; $i < 10; $i++) {
+ 			if (rand() > 0.5) {
+ 				print STDERR rand(), "\n"
+ 			} else {
+ 				print rand(), "\n";
+ 			}
+ 			sleep int(rand(10));
+ 		}
+ 		exit (rand() > 0.5) ? 0 : 1;
+ 	},
+ 	exit_cb => {
+ 		print "Sub exited with $res->{exit_status}, STDOUT: $res->{stdout}\n";
+ 	},
+ );
+
 See perldoc MojoX::Run for complete instructions.
 
 INSTALLATION
@@ -58,21 +76,6 @@ perldoc command.
 
     perldoc MojoX::Run
 
-You can also look for information at:
-
-    RT, CPAN's request tracker
-        http://rt.cpan.org/NoAuth/Bugs.html?Dist=MojoX-Run
-
-    AnnoCPAN, Annotated CPAN documentation
-        http://annocpan.org/dist/MojoX-Run
-
-    CPAN Ratings
-        http://cpanratings.perl.org/d/MojoX-Run
-
-    Search CPAN
-        http://search.cpan.org/dist/MojoX-Run/
-
-
 LICENSE AND COPYRIGHT
 
 Copyright (C) 2010 "Brane F. Gracnar"
@@ -82,4 +85,3 @@ under the terms of either: the GNU General Public License as published
 by the Free Software Foundation; or the Artistic License.
 
 See http://dev.perl.org/licenses/ for more information.
-
