@@ -27,7 +27,7 @@ my $_log = Mojo::Log->new();
 # singleton object instance
 my $_obj = undef;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 =head1 NAME
 
@@ -180,21 +180,37 @@ if you want to custom perl subroutine asynchronously.
 =item B<stdout_cb> (coderef, undef):
 
 Code that will be invoked when data were read from processes's stdout. If omitted, stdout output
-will be returned as argument to B<exit_cb>.
+will be returned as argument to B<exit_cb>. Example:
+
+ stdout_cb => sub {
+ 	my ($pid, $data) = @_;
+ 	print "Process $pid stdout: $data";
+ }
 
 =item B<stderr_cb> (coderef, undef):
 
 Code that will be invoked when data were read from processes's stderr. If omitted, stderr output
-will be returned as argument to B<exit_cb>.
+will be returned as argument to B<exit_cb>. Example:
+
+ stderr_cb => sub {
+ 	my ($pid, $data) = @_;
+ 	print "Process $pid stderr: $data";
+ }
 
 =item B<stdin_cb> (coderef, undef):
 
-Code that will be invoked when data wrote to process's stdin were flushed.
+Code that will be invoked when data wrote to process's stdin were flushed. Example:
+
+ stdin_cb => sub {
+ 	my ($pid) = @_;
+ 	print "Process $pid: stdin was flushed.";
+ }
 
 =item B<exit_cb> (coderef, undef, B<required>)
 
 Code to be invoked after process exits and all handles have been flushed. Function is called
 with 2 arguments: Process identifier (pid) and result structure. Example:
+
  exit_cb => sub {
  	my ($pid, $res) = @_;
  	print "Process $pid exited\n";
