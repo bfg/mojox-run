@@ -37,6 +37,24 @@ sub connected {
 	return $self->opened();
 }
 
+=head2 peerhost ()
+
+Always returns empty string.
+
+=cut
+sub peerhost {
+	return '';
+}
+
+=head2 peerport ()
+
+Always returns -1.
+
+=cut
+sub peerport {
+	return -1;
+}
+
 =head1 SEE ALSO
 
 L<IO::Handle>
