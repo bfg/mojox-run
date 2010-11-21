@@ -27,6 +27,8 @@ my $pid = $e->spawn(
     },
 );
 
+print "PID: $pid; error: ", $e->error(), "\n";
+
 ok $pid > 0, "Spawn succeeded";
 
 # start loop
