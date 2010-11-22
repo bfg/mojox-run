@@ -6,9 +6,6 @@ use warnings;
 use base 'Mojo::Base';
 
 use bytes;
-
-#use IPC::Open3;
-
 use Time::HiRes qw(time);
 use POSIX qw(:sys_wait_h);
 use Scalar::Util qw(blessed);
@@ -27,7 +24,7 @@ my $_log = Mojo::Log->new();
 # singleton object instance
 my $_obj = undef;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 =head1 NAME
 
@@ -467,23 +464,39 @@ sub log_level {
 ##################################################
 
 sub __handle_cb {
-	my ($self, $pid, $name, $cb) = @_;
+	my $self = shift;
+	my $pid = shift;
+	my $name = shift;
+
+	$self->{_error} = '';
+
 	my $proc = $self->_getProcStruct($pid);
 	return undef unless (defined $proc);
 
+	my $key = $name . '_cb';
+	unless (exists($proc->{$key})) {
+		$self->{_error} = "Invalid callback name: $name";
+		return undef;
+	}
+
+	# save old callback
+	my $old_cb = $proc->{$key};
+	$self->{_error} = "Handle $name: no callback defined." unless (defined $old_cb);
+
 	# should we set another callback?
-	if (defined $cb) {
-		unless (ref($cb) eq 'CODE') {
+	if (@_) {
+		my $new_cb = shift;
+		unless (ref($new_cb) eq 'CODE') {
 			$self->{_error} = "Second argument must be code reference.";
 			return undef;
 		}
 
 		# apply callback
-		$proc->{$name . '_cb'} = $cb;
+		$proc->{$key} = $new_cb;
 	}
 
 	# return it...
-	return $proc->{$name . '_cb'};
+	return $old_cb;
 }
 
 sub _spawn {
