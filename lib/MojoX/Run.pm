@@ -24,7 +24,7 @@ my $_log = Mojo::Log->new();
 # singleton object instance
 my $_obj = undef;
 
-our $VERSION = '0.12';
+our $VERSION = '0.13';
 
 =head1 NAME
 
@@ -577,18 +577,21 @@ sub _spawn {
 	# add them to ioloop
 	my $id_stdout = $self->ioloop()->connect(
 		socket   => $stdout,
+		handle   => $stdout,
 		on_error => sub { _error_cb($self, $pid, @_) },
 		on_hup   => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
 	);
 	my $id_stderr = $self->ioloop()->connect(
 		socket   => $stderr,
+		handle   => $stderr,
 		on_error => sub { _error_cb($self, $pid, @_) },
 		on_hup   => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
 	);
 	my $id_stdin = $self->ioloop()->connect(
 		socket   => $stdin,
+		handle   => $stdin,
 		on_error => sub { _error_cb($self, $pid, @_) },
 		on_hup   => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
