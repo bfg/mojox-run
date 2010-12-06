@@ -13,10 +13,11 @@ use Scalar::Util qw(blessed);
 use Mojo::Log;
 use Mojo::IOLoop;
 
-use MojoX::HandleRun;
 use MojoX::_Open3;
+use MojoX::HandleRun;
 
-__PACKAGE__->attr(ioloop => sub { Mojo::IOLoop->singleton });
+# timeout in seconds (~10 years)
+use constant VERY_LONG_TIMEOUT => 60 * 60 * 24 * 365 * 10;
 
 # private logging object...
 my $_log = Mojo::Log->new();
@@ -24,7 +25,7 @@ my $_log = Mojo::Log->new();
 # singleton object instance
 my $_obj = undef;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 =head1 NAME
 
@@ -32,9 +33,8 @@ MojoX::Run - asynchronous external command or subroutine execution for Mojo
 
 =head1 SYNOPSIS
 
- # create executor object
- # NOTE: new *ALWAYS* returns singleton object!
- my $executor = MojoX::Run->new()
+ # create async executor SINGLETON object
+ my $executor = MojoX::Run->singleton();
  
  # simple usage
  my $pid = $executor->spawn(
@@ -53,7 +53,7 @@ MojoX::Run - asynchronous external command or subroutine execution for Mojo
  
  # more complex example...
  my $pid2 = $executor->spawn(
- 	cmd => 'ping host.example.org',
+ 	cmd => 'ping -W 2 -c 5 host.example.org',
  	stdin_cb => sub {
  		my ($pid, $chunk) = @_;
  		print "STDOUT $pid: '$chunk'\n"
@@ -65,7 +65,7 @@ MojoX::Run - asynchronous external command or subroutine execution for Mojo
  		print "Process $res->{cmd} [pid: $pid] finished after $res->{time_duration_exec} second(s).\n";
  		print "Exit status: $res->{exit_status}";
  		print " by signal $res->{exit_signal}" if ($res->{exit_signal});
- 		print "with coredump " if ($res->{exit_core});
+ 		print " with coredump." if ($res->{exit_core});
  		print "\n";
  	}
  );
@@ -88,38 +88,69 @@ MojoX::Run - asynchronous external command or subroutine execution for Mojo
  	},
  );
 
+=head1 SIGCHLD WARNING
+
+Object instance of this class takes over B<SIGCHLD> signal handler. You have been
+warned!
+
 =head1 OBJECT CONSTRUCTOR
 
 =head2 new ()
 
-Constructor doesn't accept any arguments and B<ALWAYS> returns singleton
-instance. 
+Alias for L<singleton ()> method - object constructor always returns the same
+object instance.
+
+This restriction is enforced becouse there can be only one active B<SIGCHLD>
+signal handler per process. However this shouldn't be a problem becouse
+you can run multiple external processes simultaneously with MojoX::Run :)
 
 =cut
-
 sub new {
-	return $_obj if (defined $_obj);
+	return __PACKAGE__->singleton();
+}
 
+=head2 singleton ()
+
+Returns singleton object instance of MojoX::Run. Singleton object uses Mojo's
+L<Mojo::IOLoop> singleton instance. This is probably what you want instead of
+creating your own private instance.
+
+=cut
+sub singleton {
+	# return existing instance if available
+	return $_obj if (defined $_obj);
+	
+	# no singleton object? create one
+	$_obj = __PACKAGE__->_constructor();
+	return $_obj;
+}
+
+# the real constructor
+sub _constructor {
 	my $proto = shift;
 	my $class = ref($proto) || $proto;
-
 	my $self = $class->SUPER::new();
+
 	bless($self, $class);
 	$self->_init();
-
-	$_obj = $self;
-	return $_obj;
+	
+	# do we have any arguments?
+	# argument can only be ioloop object...
+	$self->ioloop(@_) if (@_);
+	
+	return $self;
 }
 
 sub DESTROY {
 	my ($self) = @_;
-
+	
 	# perform cleanup...
 	foreach my $pid (keys %{$self->{_data}}) {
 		my $proc = $self->{_data}->{$pid};
 
 		# kill process (HARD!)
 		kill(9, $pid);
+		$_log->debug("Killing subprocess $pid with SIGKILL") if (defined $_log);
 
 		my $loop = $self->ioloop();
 		next unless (defined $loop);
@@ -370,9 +401,11 @@ sub stdin_close {
 	return 1;
 }
 
-=head2 stdout_buf ($pid)
+=head2 stdout_buf ($pid [, $clear = 0])
 
 Returns contents of stdout buffer for process $pid on success, otherwise undef.
+
+Internal buffer is cleared if invoked with non-zero second argument.
 
 =cut
 
@@ -397,9 +430,11 @@ sub stdout_buf_clear {
 	return shift->stdout_buf($_[0], 1);
 }
 
-=head2 stderr_buf ($pid)
+=head2 stderr_buf ($pid [, $clear = 0])
 
 Returns contents of stderr buffer for process $pid on success, otherwise undef.
+
+Internal buffer is cleared if invoked with non-zero second argument.
 
 =cut
 
@@ -459,6 +494,79 @@ sub log_level {
 	return $_log->level();
 }
 
+=head2 num_running ()
+
+Returns number of currently managed sub-processes.
+
+=cut
+sub num_running {
+	my ($self) = @_;
+	return scalar(keys %{$self->{_data}});
+}
+
+=head2 max_running ([$limit = 0])
+
+Returns currently set concurrently running subprocesses limit if called without arguments.
+If called with integer argument sets new limit of concurrently spawned external processes
+and returns old limit.
+
+Value of 0 means that there is no limit. 
+
+=cut
+sub max_running {
+	my $self = shift;
+	# used provided argument?
+	if (@_) {
+		my $limit = shift;
+		# invalid limit?
+		return $self->{_max_running} unless (defined $limit);
+		{ no warnings; $limit += 0; }
+		my $old_limit = $self->{_max_running};
+		
+		# issue warning about overflow...
+		if ($limit > 0 && $limit <= $self->num_running()) {
+			$_log->warn(
+				"New limit of $limit concurrently managed subprocesses is lower " .
+				"than current number of managed subprocesses (" .
+				$self->num_running() .
+				"); new process creation will be refused until one or more " .
+				" currently managed subprocesses won't exit."
+			);
+		}
+		
+		# set new limit
+		$self->{_max_running} = ($limit > 0) ? $limit : 0;
+
+		# return old limit
+		return $old_limit;
+	} else {
+		return $self->{_max_running};
+	}
+}
+
+=head2 ioloop ([$loop])
+
+Returns currently used ioloop if called without arguments. Currently
+used IO loop if changed invoked with initialized L<Mojo::IOLoop> argument -
+you better be sure what you're doing! 
+
+=cut
+
+sub ioloop {
+	my ($self, $loop) = @_;
+	# no valid $loop argument?
+	unless (defined $loop && blessed($loop) && $loop->isa('Mojo::IOLoop')) {
+		# custom loop?
+		return $self->{_loop} if (defined $self->{_loop});
+		# return singleton loop
+		return Mojo::IOLoop->singleton();
+	}
+	
+	# assign custom ioloop
+	$self->{_loop} = $loop;
+	return $self->{_loop};
+}
+
 ##################################################
 #                PRIVATE METHODS                 #
 ##################################################
@@ -506,11 +614,20 @@ sub _spawn {
 		  "Invalid spawning options. THIS IS A " . __PACKAGE__ . ' BUG!!!';
 		return 0;
 	}
+	
+	# can we spawn another subprocess?
+	if ($self->max_running() > 0) {
+		if ($self->num_running() >= $self->max_running()) {
+			$self->{_error} = "Unable to spawn another subprocess: " .
+			"Limit of " . $self->num_running() . " concurrently spawned process(es) is reached.";
+			return 0;
+		}
+	}
 
 	# time to do the job
 	$_log->debug("Spawning command "
 		  . "[timeout: "
-		  . sprintf("%-.3f seconds]", $o->{exec_timeout})
+		  . ($o->{exec_timeout} > 0) ? sprintf("%-.3f seconds]", $o->{exec_timeout}) : "none"
 		  . ": $o->{cmd}");
 
 	# prepare stdio handles
@@ -538,12 +655,9 @@ sub _spawn {
 		id_timeout => undef,
 	};
 
-#=pod
 	# spawn command
 	my $pid = undef;
-
-	# eval { $pid = MojoX::_Open3::open3($stdin, $stdout, $stderr, $o->{cmd}) };
-	$pid = MojoX::_Open3::open3($stdin, $stdout, $stderr, $o->{cmd});
+	eval { $pid = MojoX::_Open3::open3($stdin, $stdout, $stderr, $o->{cmd}) };
 	if ($@) {
 		$self->{_error} = "Exception while starting command '$o->{cmd}': $@";
 		return 0;
@@ -552,50 +666,85 @@ sub _spawn {
 		$self->{_error} = "Error starting external command: $!";
 		return 0;
 	}
-	$_log->debug("Program spawned as pid $pid.");
+	$_log->debug("Subprocess spawned as pid $pid.");
 	$proc->{pid} = $pid;
-
-#=cut
 
 	# make handles non-blocking...
 	$stdin->blocking(0);
 	$stdout->blocking(0);
 	$stderr->blocking(0);
 
+	my $loop = $self->ioloop();
+
 	# exec timeout
 	if (defined $o->{exec_timeout} && $o->{exec_timeout} > 0) {
-		$_log->debug("Setting execution timeout to "
-			  . sprintf("%-.3f seconds.", $o->{exec_timeout}));
-		my $timer =
-		  $self->ioloop()
-		  ->timer($o->{exec_timeout}, sub { _timeout_cb($self, $pid) },);
+		$_log->debug(
+			"[process $pid]: Setting execution timeout to " .
+			sprintf("%-.3f seconds.", $o->{exec_timeout})
+		);
+		my $timer = $loop->timer(
+			$o->{exec_timeout},
+			sub { _timeout_cb($self, $pid) }
+		);
 
 		# save timer
 		$proc->{id_timeout} = $timer;
 	}
 
 	# add them to ioloop
-	my $id_stdout = $self->ioloop()->connect(
+	my $id_stdout = $loop->connect(
 		socket   => $stdout,
 		handle   => $stdout,
 		on_error => sub { _error_cb($self, $pid, @_) },
 		on_hup   => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
 	);
-	my $id_stderr = $self->ioloop()->connect(
+	my $id_stderr = $loop->connect(
 		socket   => $stderr,
 		handle   => $stderr,
 		on_error => sub { _error_cb($self, $pid, @_) },
 		on_hup   => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
 	);
-	my $id_stdin = $self->ioloop()->connect(
+	my $id_stdin = $loop->connect(
 		socket   => $stdin,
 		handle   => $stdin,
 		on_error => sub { _error_cb($self, $pid, @_) },
 		on_hup   => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
 	);
+	
+	{ 
+		no warnings;
+		$_log->debug("[process $pid]: handles: stdin=$id_stdin, stdout=$id_stdout, stderr=$id_stderr");
+	}
+	
+	unless (defined $id_stdout && defined $id_stderr && defined $id_stdin) {
+		$self->{_error} = "Didn't get all handles from IOLoop. This is extremely weird, spawned process was killed.";
+		CORE::kill(9, $pid);
+		return 0;
+	}
+
+	# STDIO FD timeouts
+	my $io_timeout = $o->{exec_timeout};
+	# no timeout at all? set insanely large value...
+	unless (defined $io_timeout && $io_timeout > 0) {
+		# i guess that there are no perl processes
+		# that live for 10 years...
+		$io_timeout = VERY_LONG_TIMEOUT;
+	}
+	# I/O timeout should be for at least one io loop's
+	# tick longer than execution timeout so that command
+	# closes streams itself, otherwise streams can be
+	# closed by ioloop which would result in incomplete
+	# output capture.
+	$io_timeout++;
+	
+	# apply stdio timeouts
+	$loop->connection_timeout($id_stdout, $io_timeout);
+	$loop->connection_timeout($id_stderr, $io_timeout);
+	$loop->connection_timeout($id_stdin, $io_timeout);
+	$_log->debug("[process $pid]: stdio stream timeout set to $io_timeout seconds.");
 
 	# save loop fd ids
 	$proc->{id_stdin}  = $id_stdin;
@@ -625,17 +774,17 @@ sub _read_cb {
 
 		# do we have callback?
 		if (defined $proc->{stdout_cb}) {
-			$_log->debug("[process $pid]: Invoking stdout callback.");
+			$_log->debug("[process $pid]: (handle: $id) Invoking STDOUT callback.");
 			eval { $proc->{stdout_cb}->($pid, $chunk) };
 			if ($@) {
-				$_log->error("[process $pid]: Exception in stdout_cb: $@");
+				$_log->error("[process $pid]: (handle: $id) Exception in stdout_cb: $@");
 			}
 		}
 		else {
 
 			# append to buffer
 			$_log->debug(
-				"[process $pid]: Appending $len bytes to stdout buffer.");
+				"[process $pid]: (handle: $id) Appending $len bytes to STDOUT buffer.");
 			$proc->{buf_stdout} .= $chunk;
 		}
 	}
@@ -643,27 +792,33 @@ sub _read_cb {
 
 		# do we have callback?
 		if (defined $proc->{stderr_cb}) {
-			$_log->debug("[process $pid]: Invoking stderr callback.");
+			$_log->debug("[process $pid]: (handle: $id) Invoking STDERR callback.");
 			eval { $proc->{stderr_cb}->($pid, $chunk) };
 			if ($@) {
-				$_log->error("[process $pid]: Exception in stderr_cb: $@");
+				$_log->error("[process $pid]: (handle: $id) Exception in stderr_cb: $@");
 			}
 		}
 		else {
 
 			# append to buffer
 			$_log->debug(
-				"[process $pid]: Appending $len bytes to stderr buffer.");
+				"[process $pid]: (handle: $id) Appending $len bytes to STDERR buffer.");
 			$proc->{buf_stderr} .= $chunk;
 		}
 	}
 	else {
-		$_log->warn("Got data from unmanaged handle $id; dropping");
+		$_log->debug("Got data from unmanaged handle $id; ignoring.");
 		return 0;
 	}
 }
 
 sub _hup_cb {
+	my ($self, $pid, $loop, $id) = @_;
+	# just drop the goddamn handle...
+	return $self->_dropHandle($pid, $loop, $id);
+}
+
+sub _dropHandle {
 	my ($self, $pid, $loop, $id) = @_;
 
 	# get process structure
@@ -672,23 +827,23 @@ sub _hup_cb {
 
 	if (defined $proc->{id_stdout} && $proc->{id_stdout} eq $id) {
 		$proc->{id_stdout} = undef;
-		$_log->debug("[process $pid]: stdout closed.");
+		$_log->debug("[process $pid]: STDOUT closed.");
 	}
 	elsif (defined $proc->{id_stderr} && $proc->{id_stderr} eq $id) {
 		$proc->{id_stderr} = undef;
-		$_log->debug("[process $pid]: stderr closed.");
+		$_log->debug("[process $pid]: STDERR closed.");
 	}
 	elsif (defined $proc->{id_stdin} && $proc->{id_stdin} eq $id) {
 		$proc->{id_stdin} = undef;
-		$_log->debug("[process $pid]: stdin closed.");
+		$_log->debug("[process $pid]: STDIN closed.");
 	}
 	else {
-		$_log->warn("Got HUP for unmanaged handle $id; ignoring.");
+		$_log->debug("[process $pid]: Got HUP for unmanaged handle $id; ignoring.");
 		return 0;
 	}
 
 	# drop handle...
-	$self->ioloop()->drop($id);
+	$loop->drop($id);
 
 	# check if we're ready to deliver response
 	$self->_checkIfComplete($pid);
@@ -702,12 +857,17 @@ sub _checkIfComplete {
 	my $proc = $self->_getProcStruct($pid);
 	return 0 unless (defined $proc);
 
-	# complete?!
+	# is process execution really complete?
+	# a) it can be forced
+	# b) all streams should be closed && sigchld must for pid
 	if ($force
-		|| !$proc->{running}
-		&& !defined $proc->{id_stdin}
-		&& !defined $proc->{id_stdout}
-		&& !defined $proc->{id_stderr})
+		|| (
+			!$proc->{running}
+			&& !defined $proc->{id_stdin}
+			&& !defined $proc->{id_stdout}
+			&& !defined $proc->{id_stderr}
+			)
+		)
 	{
 		$_log->debug(
 			"[process $pid]: All streams closed, process execution complete.")
@@ -719,11 +879,17 @@ sub _checkIfComplete {
 
 			# prepare callback structure
 			my $cb_d = {
-				cmd => (ref($proc->{cmd})) ? "coderef" : $proc->{cmd},
+				cmd => (ref($proc->{cmd}) eq 'CODE') ?
+					'CODE' :
+					(
+						(ref($proc->{cmd}) eq 'ARRAY') ?
+							join(' ', @{$proc->{cmd}}) :
+							$proc->{cmd}
+					),
 				exit_status         => $proc->{exit_val},
 				exit_signal         => $proc->{exit_signal},
 				exit_core           => $proc->{exit_core},
-				error               => $proc->{error},
+				error               => ($force) ? "Forced process termination." : $proc->{error},
 				stdout              => $proc->{buf_stdout},
 				stderr              => $proc->{buf_stderr},
 				time_started        => $proc->{time_started},
@@ -733,10 +899,10 @@ sub _checkIfComplete {
 			};
 
 			# safely invoke callback
-			$_log->debug("[process $pid]: invoking exit_cb");
+			$_log->debug("[process $pid]: invoking exit_cb callback.") if (defined $_log);
 			eval { $proc->{exit_cb}->($pid, $cb_d); };
 			if ($@) {
-				$_log->error("[process $pid]: Error running exit_cb: $@");
+				$_log->error("[process $pid]: Error running exit_cb: $@") if (defined $_log);
 			}
 		}
 		else {
@@ -754,7 +920,9 @@ sub _destroyProcStruct {
 }
 
 sub _error_cb {
-	return _hup_cb(@_);
+	my ($self, $pid, $loop, $id, $err) = @_;
+	$_log->debug("[process $pid]: Error on handle $id: $err");
+	return $self->_dropHandle($pid, $loop, $id);
 }
 
 sub _timeout_cb {
@@ -794,6 +962,12 @@ sub _init {
 
 	# stored exec structs
 	$self->{_data} = {};
+	
+	# ioloop object...
+	$self->{_ioloop} = undef;
+	
+	# maximum running limit
+	$self->{_max_running} = 0;
 
 	# install SIGCHLD handler
 	$SIG{'CHLD'} = sub { _sig_chld($self, @_) };
@@ -894,7 +1068,8 @@ sub _procCleanup {
 	}
 
 	$_log->debug(
-		"[process $pid]: exited with exit status: $exit_val by signal $signum"
+		"[process $pid]: Got SIGCHLD, " .
+		"exited with exit status: $exit_val by signal $signum"
 		  . (($core) ? "with core dump" : "")
 		  . '.');
 

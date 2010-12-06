@@ -10,7 +10,7 @@ use vars qw(@ISA);
 
 =head1 NAME
 
-MojoX::Handle - IO::Handle wrapper with some socket-like behaviour.
+MojoX::HandleRun - IO::Handle wrapper with some emulated socket-like behaviour for L<Mojo::IOLoop> compatibility.
 
 =head1 SYNOPSIS
 
