@@ -1,5 +1,10 @@
 Revision history for MojoX-Run
 
+0.14
+	added handle "connect" timeouts
+	new methods: max_running, num_running
+	fixed documentation in HandleRun
+	
 0.13	2010/11/21
 	Mojolicious > 0.999941 compatibility fix.
 
