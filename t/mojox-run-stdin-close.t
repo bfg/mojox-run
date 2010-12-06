@@ -9,6 +9,7 @@ use FindBin;
 use MojoX::Run;
 
 my $e = MojoX::Run->new();
+$e->log_level('info');
 
 my $test_cmd = $FindBin::Bin . '/stdin-test.pl';
 my $cb_exit_status = undef;

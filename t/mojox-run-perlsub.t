@@ -3,13 +3,21 @@
 use strict;
 use warnings;
 
-use Test::More tests => 6;
+use Test::More;
+
+if ($^O =~ m/(?:linux|bsd|aix|macos|darwin)/i) {
+	plan tests => 6;
+} else {
+	plan skip_all => 'This test requires UNIX platform.';
+}
+
 
 use bytes;
 use MojoX::Run;
 use Data::Dumper;
 
 my $e = MojoX::Run->new();
+$e->log_level('info');
 
 my $cb_exit_status = undef;
 my $cb_pid = undef;
@@ -20,6 +28,7 @@ my $data_sent = 'abcdefgh';
 my $pid = $e->spawn(
 	cmd => sub {
 		print $data_sent;
+		sleep 1;
 		exit 12;
 	},
 	exit_cb => sub {
