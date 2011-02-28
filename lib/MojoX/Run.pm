@@ -1305,6 +1305,18 @@ sub _sig_chld {
 	  if ($i > 0);
 }
 
+=head1 BUGS/CAVEATS
+
+There seem to be problems on some B<OpenBSD, DragonFly and Solaris> systems
+in conjunction with L<Mojo::IOLoop> implementation. Error manifests itself with the
+following warning message:
+
+ Filehandle GEN3 opened only for input at /usr/libdata/perl5/i386-openbsd/5.10.1/IO/Handle.pm line 465.
+
+L<IO::Handle>'s syswrite method is called by L<Mojo::IOLoop>'s _write, but there is no good reason
+to write to process stdout or stderr... I'm investigating, feel free to contact me regarding this
+issue.
+
 =head1 AUTHOR
 
 "Brane F. Gracnar", C<< <"bfg at frost.ath.cx"> >>
