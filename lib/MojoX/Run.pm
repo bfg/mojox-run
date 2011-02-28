@@ -10,6 +10,8 @@ use Time::HiRes qw(time);
 use POSIX qw(:sys_wait_h);
 use Scalar::Util qw(blessed);
 
+use Storable qw(thaw freeze);
+
 use Mojo::Log;
 use Mojo::IOLoop;
 
@@ -25,19 +27,19 @@ my $_log = Mojo::Log->new();
 # singleton object instance
 my $_obj = undef;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 =head1 NAME
 
-MojoX::Run - asynchronous external command or subroutine execution for Mojo
+MojoX::Run - asynchronous external command and subroutine execution for Mojo
 
 =head1 SYNOPSIS
 
  # create async executor SINGLETON object
- my $executor = MojoX::Run->singleton();
+ my $mojox_run = MojoX::Run->singleton();
  
  # simple usage
- my $pid = $executor->spawn(
+ my $pid = $mojox_run->spawn(
  	cmd => "ping -W 2 -c 5 host.example.org",
  	exit_cb => sub {
  		my ($pid, $res) = @_;
@@ -48,11 +50,11 @@ MojoX::Run - asynchronous external command or subroutine execution for Mojo
  );
  # check for injuries
  unless ($pid) {
- 	print "Command startup failed: ", $executor->error(), "\n";
+ 	print "Command startup failed: ", $mojox_run->error(), "\n";
  }
  
  # more complex example...
- my $pid2 = $executor->spawn(
+ my $pid2 = $mojox_run->spawn(
  	cmd => 'ping -W 2 -c 5 host.example.org',
  	stdin_cb => sub {
  		my ($pid, $chunk) = @_;
@@ -71,7 +73,7 @@ MojoX::Run - asynchronous external command or subroutine execution for Mojo
  );
  
  # even fancier usage: spawn coderef
- my $pid3 = $executor->spawn(
+ my $pid3 = $mojox_run->spawn(
  	cmd => sub {
  		for (my $i = 0; $i < 10; $i++) {
  			if (rand() > 0.5) {
@@ -95,9 +97,9 @@ warned!
 
 =head1 OBJECT CONSTRUCTOR
 
-=head2 new ()
+=head2 new
 
-Alias for L<singleton ()> method - object constructor always returns the same
+Alias for L</singleton> method - object constructor always returns the same
 object instance.
 
 This restriction is enforced becouse there can be only one active B<SIGCHLD>
@@ -109,7 +111,9 @@ sub new {
 	return __PACKAGE__->singleton();
 }
 
-=head2 singleton ()
+=head2 singleton
+
+ my $mojox_run = MojoX::Run->singleton();
 
 Returns singleton object instance of MojoX::Run. Singleton object uses Mojo's
 L<Mojo::IOLoop> singleton instance. This is probably what you want instead of
@@ -183,7 +187,9 @@ sub DESTROY {
 
 =head1 METHODS
 
-=head2 error ()
+=head2 error
+
+ my $err = $mojox_run->error();
 
 Returns last error.
 
@@ -194,7 +200,9 @@ sub error {
 	return $self->{_error};
 }
 
-=head2 spawn (%opt)
+=head2 spawn
+
+ my $pid = $mojox_run->spawn(%opt);
 
 Spawns new subprocess. The following options are supported:
 
@@ -281,7 +289,131 @@ sub spawn {
 	return $self->_spawn($o);
 }
 
-=head2 stdin_write ($pid, $data [, $cb])
+=head2 spawn_sub
+
+ my $code = sub { return { a => 1, b => 2} };
+ my $pid = $mojox_run->spawn_sub(
+ 	$code,
+ 	exit_cb => sub {
+ 		my ($pid, $result, $exception) = @_;
+ 	}
+ );
+
+Spawns new subprocess in which $code subroutine will be executed. Return value of
+subroutine will be delivered to B<exit_cb> callback.
+
+The following options are supported:
+
+=over
+
+=item B<stdin_cb> (coderef, undef):
+
+Code that will be invoked when data wrote to process's stdin were flushed. Example:
+
+ stdin_cb => sub {
+ 	my ($pid) = @_;
+ 	print "Process $pid: stdin was flushed.";
+ }
+
+=item B<exit_cb> (coderef, undef, B<required>)
+
+Code to be invoked after process exits and all handles have been flushed. Function is called
+with 2 arguments: Process identifier (pid) and result structure. Example:
+
+ exit_cb => sub {
+ 	my ($pid, $result, $exception) = @_;
+ 	if ($exception) {
+ 		print "Horrible exception accoured while executing subroutine: $exception";
+ 		return;
+ 	}
+ 	
+ 	# result is always arrayref, becouse subs can return list values!
+ 	print "Got async sub result: ", Dumper($result), "\n";
+ }
+
+=item B<exec_timeout> (float, 0):
+
+If set to positive non-zero value, process will be killed after specified timeout of seconds. Timeout accuracy
+depends on IOLoop's timeout() value.
+
+=back
+
+Returns non-zero process identifier (pid) on success, otherwise 0 and sets error.
+
+=cut
+sub spawn_sub {
+	my ($self, $sub, %opt) = @_;
+	unless (defined $sub && ref($sub) eq 'CODE') {
+		$self->{_error} = "First argument must be coderef.";
+		return 0;
+	}
+	my $exit_cb = delete($opt{exit_cb});
+	unless (defined $exit_cb && ref($exit_cb)) {
+		$self->{_error} = "No exit_cb defined!";
+		return 0;
+	}
+	
+	# remove stupid stuff from %opt
+	delete($opt{stdout_cb});
+	delete($opt{stderr_cb});
+	
+	# wrap sub to our custom routine
+	my $code = sub {
+		# run sub...
+		local $@;
+		my @rv = eval { $sub->() };
+		
+		# exception?
+		if ($@) {
+			print STDERR "Exception: $@";
+			CORE::exit(1);
+		}
+		
+		# we have a result!
+		print freeze(\ @rv);
+		CORE::exit(0);
+	};
+	
+	# wrap exit_cb to our routine
+	my $exit_code = sub {
+		my ($pid, $res) = @_;
+		my $ref = undef;
+		my $ex = undef;
+		# everything ok?
+		if ($res->{exit_status} == 0) {
+			local $@;
+			# try to de-serialize data...
+			$ref = eval { thaw($res->{stdout}) };
+			# check for injuries...
+			if ($@) {
+				$ex = "Error de-serializing subprocess data: $@";
+			}
+		} else {
+			$ex = $res->{stderr};
+		}
+		
+		# run exit cb...
+		$exit_cb->($pid, $ref, $ex);
+	};
+	
+	# spawn the goddamn sub
+	my $p = $self->spawn(
+		cmd => $code,
+		%opt,
+		exit_cb => $exit_code,
+	);
+	
+	return 0 unless ($p);
+
+	# lock down stdout/err streams...
+	$self->_lock_output($p);
+	
+	return $p;
+}
+
+=head2 stdin_write
+
+ $mojox_run->stdin_write($pid, $data [, $cb]);
 
 Writes $data to stdin of process $pid if process still has opened stdin. If $cb is defined
 code reference it will invoke it when data has been written. If $cb is omitted B<stdin_cb>
@@ -327,7 +459,12 @@ sub stdin_write {
 	return 1;
 }
 
-=head2 stdout_cb ($pid [, $cb])
+=head2 stdout_cb
+
+ # set
+ $mojox_run->stdout_cb($pid, $cb);
+ # get
+ my $cb = $mojox_run->stdout_cb($pid);
 
 If called without $cb argument returns stdout callback for process $pid, otherwise
 sets stdout callback. If $cb is undefined, removes callback.
@@ -341,7 +478,12 @@ sub stdout_cb {
 	return $self->__handle_cb($pid, 'stdout', $cb);
 }
 
-=head2 stderr_cb ($pid [, $cb])
+=head2 stderr_cb
+
+ # set
+ $mojox_run->stderr_cb($pid, $cb);
+ # get
+ $cb = $mojox_run->stderr_cb($pid);
 
 If called without $cb argument returns stderr callback for process $pid, otherwise
 sets stderr callback. If $cb is undefined, removes callback.
@@ -355,7 +497,12 @@ sub stderr_cb {
 	return $self->__handle_cb($pid, 'stderr', $cb);
 }
 
-=head2 stdin_cb ($pid [, $cb])
+=head2 stdin_cb
+
+ # set
+ $mojox_run->stdin_cb($pid, $cb);
+ # get
+ $mojox_run->stdin_cb($pid);
 
 If called without $cb argument returns stdin callback for process $pid, otherwise
 sets stdin callback. If $cb is undefined, removes callback.
@@ -369,7 +516,9 @@ sub stdin_cb {
 	return $self->__handle_cb($pid, 'stdin', $cb);
 }
 
-=head2 stdin_close ($pid)
+=head2 stdin_close
+
+ $mojox_run->stdin_close($pid);
 
 Closes stdin handle to specified process. You need to explicitly close stdin
 if spawned program doesn't exit until it's stdin is not closed.
@@ -401,7 +550,12 @@ sub stdin_close {
 	return 1;
 }
 
-=head2 stdout_buf ($pid [, $clear = 0])
+=head2 stdout_buf
+
+ # just get it
+ $buf = $mojox_run->stdout_buf($pid);
+ # get and drain
+ $buf = $mojox_run->stdout_buf($pid, 1);
 
 Returns contents of stdout buffer for process $pid on success, otherwise undef.
 
@@ -414,15 +568,18 @@ sub stdout_buf {
 	$clear = 0 unless (defined $clear);
 	my $proc = $self->_getProcStruct($pid);
 	return undef unless (defined $proc);
+	return undef if ($proc->{out_locked});
 
 	# clear buffer?
 	$proc->{buf_stdout} = '' if ($clear);
 	return $proc->{buf_stdout};
 }
 
-=head2 stdout_buf_clear ($pid)
+=head2 stdout_buf_clear
 
-Clears stdout buffer for process $pid. Returns empty string on success, otherwise undef.
+ $buf = $mojox_run->stdout_buf_clear($pid);
+
+Clears stdout buffer for process $pid. Returns string containing buffer contents on success, otherwise undef.
 
 =cut
 
@@ -430,7 +587,12 @@ sub stdout_buf_clear {
 	return shift->stdout_buf($_[0], 1);
 }
 
-=head2 stderr_buf ($pid [, $clear = 0])
+=head2 stderr_buf
+
+ # just get it
+ $buf = $mojox_run->stderr_buf($pid);
+ # get and drain
+ $buf = $mojox_run->stderr_buf($pid, 1);
 
 Returns contents of stderr buffer for process $pid on success, otherwise undef.
 
@@ -443,13 +605,16 @@ sub stderr_buf {
 	$clear = 0 unless (defined $clear);
 	my $proc = $self->_getProcStruct($pid);
 	return undef unless (defined $proc);
+	return undef if ($proc->{out_locked});
 
 	# clear buffer?
 	$proc->{buf_stderr} = '' if ($clear);
 	return $proc->{buf_stderr};
 }
 
-=head2 stderr_buf_clear ($pid)
+=head2 stderr_buf_clear
+
+ $buf = $mojox_run->stderr_buf_clear($pid);
 
 Clears stderr buffer for process $pid. Returns empty string on success, otherwise undef.
 
@@ -459,7 +624,9 @@ sub stderr_buf_clear {
 	return shift->stderr_buf($_[0], 1);
 }
 
-=head2 kill ($pid [, $signal = 15])
+=head2 kill
+
+ $mojox_run->kill($pid [, $signal = 15]);
 
 Kills process $pid with specified signal. Returns 1 on success, otherwise 0.
 
@@ -494,7 +661,7 @@ sub log_level {
 	return $_log->level();
 }
 
-=head2 num_running ()
+=head2 num_running
 
 Returns number of currently managed sub-processes.
 
@@ -504,7 +671,9 @@ sub num_running {
 	return scalar(keys %{$self->{_data}});
 }
 
-=head2 max_running ([$limit = 0])
+=head2 max_running
+
+ $mojox_run->max_running($limit);
 
 Returns currently set concurrently running subprocesses limit if called without arguments.
 If called with integer argument sets new limit of concurrently spawned external processes
@@ -544,7 +713,12 @@ sub max_running {
 	}
 }
 
-=head2 ioloop ([$loop])
+=head2 ioloop
+
+ # get
+ $loop = $mojox_run->ioloop();
+ # set
+ $mojox_run->ioloop($loop);
 
 Returns currently used ioloop if called without arguments. Currently
 used IO loop if changed invoked with initialized L<Mojo::IOLoop> argument -
@@ -598,6 +772,10 @@ sub __handle_cb {
 			$self->{_error} = "Second argument must be code reference.";
 			return undef;
 		}
+		if ($proc->{out_locked} && ($name eq 'stdout' || $name eq 'stderr')) {
+			$self->{_error} = "Process was started by spawn_sub. Ouput streams are locked.";
+			return undef;
+		}
 
 		# apply callback
 		$proc->{$key} = $new_cb;
@@ -637,6 +815,7 @@ sub _spawn {
 
 	# prepare spawn structure
 	my $proc = {
+		out_locked   => 0,
 		time_started => time(),
 		pid          => 0,
 		cmd          => $o->{cmd},
@@ -755,6 +934,17 @@ sub _spawn {
 	$self->{_data}->{$pid} = $proc;
 
 	return $pid;
+}
+
+sub _lock_output {
+	my ($self, $pid) = @_;
+
+	# get process struct...
+	my $proc = $self->_getProcStruct($pid);
+	return 0 unless (defined $proc);
+
+	$proc->{out_locked} = 1;
+	return 1;
 }
 
 sub _read_cb {
@@ -1152,6 +1342,10 @@ L<http://cpanratings.perl.org/d/MojoX-Run>
 
 L<http://search.cpan.org/dist/MojoX-Run/>
 
+=item * Source repository
+
+L<https://github.com/bfg/mojox-run>
+
 =back
 
 
@@ -1163,7 +1357,7 @@ execution.
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright 2010, Brane F. Gracnar.
+Copyright 2010-2011, Brane F. Gracnar.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of either: the GNU General Public License as published
