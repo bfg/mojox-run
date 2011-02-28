@@ -1,5 +1,9 @@
 Revision history for MojoX-Run
 
+0.15
+	added method spawn_sub (we're now depending on Storable)
+	updated pod
+
 0.14
 	added handle "connect" timeouts
 	new methods: max_running, num_running
