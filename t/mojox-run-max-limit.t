@@ -2,10 +2,10 @@
 
 use Test::More;
 
-if ($^O =~ m/(?:linux|bsd|aix|macos|darwin)/i) {
+if ($^O =~ m/(?:linux|aix|macos|darwin|freebsd|netbsd)/i) {
 	plan tests => 3;
 } else {
-	plan skip_all => 'This test requires UNIX platform.';
+	plan skip_all => 'This test requires supported UNIX platform.';
 }
 
 use bytes;

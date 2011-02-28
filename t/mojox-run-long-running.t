@@ -2,10 +2,10 @@
 
 use Test::More;
 
-if ($^O =~ m/(?:linux|bsd)/i) {
+if ($^O =~ m/(?:linux|freebsd|netbsd)/i) {
 	plan tests => 2;
 } else {
-	plan skip_all => 'This test requires UNIX platform.';
+	plan skip_all => 'This test requires supported UNIX platform.';
 }
 
 use MojoX::Run;

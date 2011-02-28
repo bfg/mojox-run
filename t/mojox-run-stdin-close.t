@@ -3,7 +3,13 @@
 use strict;
 use warnings;
 
-use Test::More tests => 2;
+use Test::More;
+
+if ($^O =~ m/(?:linux|freebsd|netbsd|aix|macos|darwin)/i) {
+	plan tests => 2;
+} else {
+	plan skip_all => 'This test requires supported UNIX platform.';
+}
 
 use FindBin;
 use MojoX::Run;

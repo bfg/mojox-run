@@ -5,10 +5,10 @@ use warnings;
 
 use Test::More;
 
-if ($^O =~ m/(?:linux|bsd|aix|macos|darwin)/i) {
+if ($^O =~ m/(?:linux|freebsd|netbsd|aix|macos|darwin)/i) {
 	plan tests => 6;
 } else {
-	plan skip_all => 'This test requires UNIX platform.';
+	plan skip_all => 'This test requires supported UNIX platform.';
 }
 
 
