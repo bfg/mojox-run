@@ -178,7 +178,7 @@ sub DESTROY {
 	}
 
 	# disable sigchld hander
-	$SIG{'CHLD'} = 'IGNORE';
+	$self->_sigchld_handler_remove();
 }
 
 ##################################################
@@ -544,6 +544,14 @@ sub stdin_close {
 	}
 
 	# drop handle...
+	if ($loop->can('handle')) {
+		my $h = $loop->handle($id_stdin);
+		if (defined $h) {
+			$_log->debug("[process $pid]: Closing STDIN handle $id_stdin filehandle $h.");
+			close($h);
+		}
+	}
+	$_log->debug("[process $pid]: Dropping STDIN handle $id_stdin.");
 	$loop->drop($id_stdin);
 	$proc->{id_stdin} = undef;
 
@@ -832,6 +840,7 @@ sub _spawn {
 		id_stdout  => undef,
 		id_stderr  => undef,
 		id_timeout => undef,
+		w_chld => undef,
 	};
 
 	# spawn command
@@ -869,28 +878,28 @@ sub _spawn {
 		# save timer
 		$proc->{id_timeout} = $timer;
 	}
-
+	
 	# add them to ioloop
 	my $id_stdout = $loop->connect(
-		socket   => $stdout,
 		handle   => $stdout,
 		on_error => sub { _error_cb($self, $pid, @_) },
-		on_hup   => sub { _hup_cb($self, $pid, @_) },
+		on_close => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
+		on_connect => sub { $_log->debug("STDOUT handle $_[1] connected.") },
 	);
 	my $id_stderr = $loop->connect(
-		socket   => $stderr,
 		handle   => $stderr,
 		on_error => sub { _error_cb($self, $pid, @_) },
-		on_hup   => sub { _hup_cb($self, $pid, @_) },
+		on_close => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
+		on_connect => sub { $_log->debug("STDERR handle $_[1] connected.") },
 	);
 	my $id_stdin = $loop->connect(
-		socket   => $stdin,
 		handle   => $stdin,
 		on_error => sub { _error_cb($self, $pid, @_) },
-		on_hup   => sub { _hup_cb($self, $pid, @_) },
+		on_close => sub { _hup_cb($self, $pid, @_) },
 		on_read  => sub { _read_cb($self, $pid, @_) },
+		on_connect => sub { $_log->debug("STDIN handle $_[1] connected.") },
 	);
 	
 	{ 
@@ -929,9 +938,12 @@ sub _spawn {
 	$proc->{id_stdin}  = $id_stdin;
 	$proc->{id_stdout} = $id_stdout;
 	$proc->{id_stderr} = $id_stderr;
-
+	
 	# save structure...
 	$self->{_data}->{$pid} = $proc;
+
+	# register signal handler...
+	$self->_watch_pid($pid);
 
 	return $pid;
 }
@@ -1011,6 +1023,9 @@ sub _hup_cb {
 sub _dropHandle {
 	my ($self, $pid, $loop, $id) = @_;
 
+	# drop handle...
+	$loop->drop($id);
+
 	# get process structure
 	my $proc = $self->_getProcStruct($pid);
 	return 0 unless (defined $proc);
@@ -1031,9 +1046,6 @@ sub _dropHandle {
 		$_log->debug("[process $pid]: Got HUP for unmanaged handle $id; ignoring.");
 		return 0;
 	}
-
-	# drop handle...
-	$loop->drop($id);
 
 	# check if we're ready to deliver response
 	$self->_checkIfComplete($pid);
@@ -1111,7 +1123,10 @@ sub _destroyProcStruct {
 
 sub _error_cb {
 	my ($self, $pid, $loop, $id, $err) = @_;
-	$_log->debug("[process $pid]: Error on handle $id: $err");
+	{
+		no warnings;
+		$_log->debug("[process $pid]: Error on handle $id: $err");
+	}
 	return $self->_dropHandle($pid, $loop, $id);
 }
 
@@ -1160,7 +1175,7 @@ sub _init {
 	$self->{_max_running} = 0;
 
 	# install SIGCHLD handler
-	$SIG{'CHLD'} = sub { _sig_chld($self, @_) };
+	$self->_sigchld_handler_install();
 }
 
 sub _getProcStruct {
@@ -1287,22 +1302,103 @@ sub _procCleanup {
 	$self->_checkIfComplete($pid);
 }
 
-sub _sig_chld {
+sub _watch_pid {
+	my ($self, $pid) = @_;
+	my $w = $self->ioloop()->iowatcher();
+	
+	if (defined $w && blessed $w) {
+		# get process structure
+		my $proc = $self->_getProcStruct($pid);
+		return 0 unless (defined $proc);
+		
+		# AnyEvent?
+		no warnings;
+		if ($w->isa('Mojo::IOWatcher::AnyEvent') && defined $AnyEvent::MODEL) {
+			$_log->debug("Installing AnyEvent child handler for pid $pid.");
+			$self->{w_chld} = AE::child($pid, sub { $self->_sigchld_handler_ae(@_) });
+		}
+		# EV iowatcher?
+		elsif ($w->isa('Mojo::IOWatcher::EV')) {
+			$_log->debug("Installing EV child handler for pid $pid.");
+			$self->{w_chld} = EV::child($pid, 0, sub { $self->_sigchld_handler_ev(@_) });
+		}
+	}
+}
+
+sub _sigchld_handler_install {
+	my $self = shift;
+	my $w = $self->ioloop()->iowatcher();
+	
+	my $install = 0;
+
+	if (defined $w && blessed $w) {
+		if ($w->isa('Mojo::IOWatcher::EV')) {
+			# nope, this one is smart as hell
+		}
+		elsif ($w->isa('Mojo::IOWatcher::AnyEvent') && defined $AnyEvent::MODEL) {
+			# nope, this one is also smart as hell
+		} else {
+			$install = 1;
+		}
+	} else {
+		$install = 1;
+	}
+
+	if ($install) {
+		$_log->debug("Installing simple, \$SIG{'CHLD'} based signal handler.");
+		
+		my $old = $SIG{'CHLD'};
+		if (defined $old && ref($old) eq 'CODE') {
+			$self->{_old_sigchld_handler} = $old;
+		}
+		
+		$SIG{'CHLD'} = sub { $self->_sigchld_handler_simple(@_) }
+	} else {
+		$_log->debug(
+			"Not installig any signal handler, because IOWatcher implementation " .
+			ref($w) . " implements better CHLD signal handling."
+		);
+	}
+}
+
+sub _sigchld_handler_remove {
+	my $self = shift;
+	if (defined $self->{_old_sigchld_handler}) {
+		$_log->debug("Restoring previous CHLD signal handler.");
+		$SIG{'CHLD'} = $self->{_old_sigchld_handler};
+	}
+}
+
+sub _sigchld_handler_ae {
+	my $self = shift;
+	$self->_procCleanup($_[0], _exit_status($_[1]));
+}
+
+sub _sigchld_handler_ev {
+	my $self = shift;
+	$self->_procCleanup($_[0]->rpid, _exit_status($_[0]->rstatus));
+}
+
+sub _sigchld_handler_simple {
 	my ($self) = @_;
 
 	# $_log->debug('SIGCHLD hander startup: ' . join(", ", @_));
 	my $i = 0;
 	while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
 		$i++;
-		my $exit_val = $? >> 8;
-		my $signum   = $? & 127;
-		my $core     = $? & 128;
-
 		# do process cleanup
-		$self->_procCleanup($pid, $exit_val, $signum, $core);
+		$self->_procCleanup($pid, _exit_status($?));
 	}
 	$_log->debug("SIGCHLD handler cleaned up after $i process(es).")
 	  if ($i > 0);
+}
+
+sub _exit_status {
+	my ($s) = @_;
+	my $exit_val = $s >> 8;
+	my $signum   = $s & 127;
+	my $core     = $s & 128;
+	return ($exit_val, $signum, $core);
 }
 
 =head1 BUGS/CAVEATS
