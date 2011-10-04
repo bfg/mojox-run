@@ -153,7 +153,7 @@ sub DESTROY {
 		my $proc = $self->{_data}->{$pid};
 
 		# kill process (HARD!)
-		kill(9, $pid);
+		kill(9, $pid) unless $self->_is_child;
 		$_log->debug("Killing subprocess $pid with SIGKILL") if (defined $_log);
 
 		my $loop = $self->ioloop();
@@ -845,7 +845,9 @@ sub _spawn {
 
 	# spawn command
 	my $pid = undef;
+	$self->_is_child(1);
 	eval { $pid = MojoX::_Open3::open3($stdin, $stdout, $stderr, $o->{cmd}) };
+	$self->_is_child(0);
 	if ($@) {
 		$self->{_error} = "Exception while starting command '$o->{cmd}': $@";
 		return 0;
@@ -1399,6 +1401,15 @@ sub _exit_status {
 	my $signum   = $s & 127;
 	my $core     = $s & 128;
 	return ($exit_val, $signum, $core);
+}
+
+sub _is_child {
+	my $self = shift;
+	my $mod  = shift || "";
+	
+	$self->{_is_child} = 1 if $mod;
+	
+	return $self->{_is_child};
 }
 
 =head1 BUGS/CAVEATS
