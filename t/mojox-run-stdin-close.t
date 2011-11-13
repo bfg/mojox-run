@@ -41,13 +41,19 @@ ok $pid > 0, "Spawn succeeded";
 my $data_sent = 'abcdefgh';
 
 # write some data to stdin...
-$e->stdin_write($pid, $data_sent);
+$e->stdin_write(
+    $pid,
+    $data_sent,
+    sub {
 
-# close stdin
-$e->stdin_close($pid);
+        # close stdin when everything written
+        $e->stdin_close($pid);
+    }
+);
+
 
 # start loop
 $e->ioloop()->start();
 
 # check what process got on stdin...
-ok defined $cb_stdout && $data_sent eq $cb_stdout, "Sent data equals received data.";
+is $cb_stdout, $data_sent, "Sent data equals received data.";
