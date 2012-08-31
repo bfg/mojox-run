@@ -13,3 +13,5 @@ pod2htm*.tmp
 MojoX-Run-*/Makefile
 /pm_to_blib
 ignore.txt
+*.swp
+MYMETA.*

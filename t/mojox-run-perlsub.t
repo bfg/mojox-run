@@ -17,7 +17,7 @@ use MojoX::Run;
 use Data::Dumper;
 
 my $e = MojoX::Run->new();
-$e->log_level('info');
+$e->log_level('debug');
 
 my $cb_exit_status = undef;
 my $cb_pid = undef;
@@ -46,7 +46,8 @@ my $pid = $e->spawn(
 	},
 );
 
-print "PID: $pid; error: ", $e->error(), "\n";
+print "PID: $pid; error: ", $e->error, "\n"
+   if $e->error;;
 
 ok $pid > 0, "Spawn succeeded";
 
@@ -57,5 +58,6 @@ ok $pid == $cb_pid, "cb_pid == pid";
 ok $cb_exit_status == 12, "cb_exit_status == 12";
 ok length($cb_res) > 0, "result len > 0: length(cb_res)";
 ok length($data_sent) == length($cb_res), "sent len == received_len";
+diag $e->{_error} . "\n"  if $e->{_error};;;
 ok $data_sent eq $cb_res, "data_sent eq cb_res";
 
