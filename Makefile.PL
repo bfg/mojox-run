@@ -15,6 +15,7 @@ WriteMakefile(
         'Test::More'  => 0,
         'Mojolicious' => 0.999940,
         'Storable'    => 0,
+        'common::sense'=> 0,
     },
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'MojoX-Run-*' },
