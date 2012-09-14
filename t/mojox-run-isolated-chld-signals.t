@@ -13,8 +13,6 @@ my $cmd_logpath = 't/cmd.log';
 unlink $cmd_logpath if -e $cmd_logpath;
 use Mojo::Log;
 
-
-
 my @elements = qw(aa bb cc);
 
 my $i = 0;
@@ -41,10 +39,5 @@ use Mojo::Util qw/slurp/;
 my @exits= split "\n", slurp($logpath);
 my @cmds = split "\n", slurp($cmd_logpath);
 
-is(3, @cmds, 'cmd called thrice in child processes.');
-is(3, @exits, 'exit_cb called thrice in parent process.');
-
-
-
-
-
+is(@cmds, 3, 'cmd called thrice in child processes.');
+is(@exits, 3, 'exit_cb called thrice in parent process.');
