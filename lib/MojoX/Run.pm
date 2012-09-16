@@ -161,17 +161,18 @@ sub DESTROY {
 
 		# drop fds
 		if (defined $proc->{id_stdout}) {
-			$loop->drop($proc->{id_stdout});
+			$loop->remove($proc->{id_stdout});
 		}
 		if (defined $proc->{id_stderr}) {
-			$loop->drop($proc->{id_stderr});
+			$loop->remove($proc->{id_stderr});
 		}
 		if (defined $proc->{id_stdin}) {
-			$loop->drop($proc->{id_stdin});
+			$loop->remove($proc->{id_stdin});
 		}
 
 		# fire exit callbacks (if any)
-		$self->_checkIfComplete($pid, 1);
+		$self->_checkIfComplete($pid, 1) unless $self->_is_child;
+		#should only be called for parent (NIS, 2012-09-16)
 
 		# remove struct
 		delete($self->{_data}->{$pid});
@@ -455,7 +456,7 @@ sub stdin_write {
 	}
 
 	# write data
-	$self->ioloop()->write($proc->{id_stdin}, $data, $cb);
+	$self->ioloop()->stream($proc->{id_stdin})->write($data => $cb);
 	return 1;
 }
 
@@ -552,7 +553,7 @@ sub stdin_close {
 		}
 	}
 	$_log->debug("[process $pid]: Dropping STDIN handle $id_stdin.");
-	$loop->drop($id_stdin);
+	$loop->remove($id_stdin);
 	$proc->{id_stdin} = undef;
 
 	return 1;
@@ -882,28 +883,36 @@ sub _spawn {
 	}
 	
 	# add them to ioloop
-	my $id_stdout = $loop->connect(
-		handle   => $stdout,
-		on_error => sub { _error_cb($self, $pid, @_) },
-		on_close => sub { _hup_cb($self, $pid, @_) },
-		on_read  => sub { _read_cb($self, $pid, @_) },
-		on_connect => sub { $_log->debug("STDOUT handle $_[1] connected.") },
-	);
-	my $id_stderr = $loop->connect(
-		handle   => $stderr,
-		on_error => sub { _error_cb($self, $pid, @_) },
-		on_close => sub { _hup_cb($self, $pid, @_) },
-		on_read  => sub { _read_cb($self, $pid, @_) },
-		on_connect => sub { $_log->debug("STDERR handle $_[1] connected.") },
-	);
-	my $id_stdin = $loop->connect(
-		handle   => $stdin,
-		on_error => sub { _error_cb($self, $pid, @_) },
-		on_close => sub { _hup_cb($self, $pid, @_) },
-		on_read  => sub { _read_cb($self, $pid, @_) },
-		on_connect => sub { $_log->debug("STDIN handle $_[1] connected.") },
-	);
-	
+   my $stdout_stream = Mojo::IOLoop::Stream->new($stdout);
+   my $id_stdout = $loop->stream($stdout_stream);
+	$stdout_stream->on(error => 
+      sub { _error_cb($self, $pid, $loop,$id_stdout,$_[1]) });
+	$stdout_stream->on(close => 
+      sub { _hup_cb($self, $pid, $loop,$id_stdout) });
+	$stdout_stream->on(read  =>
+      sub { _read_cb($self, $pid, $loop,$id_stdout,$_[1]) });
+   $_log->debug("STDOUT handle $id_stdout connected.");
+
+   my $stderr_stream = Mojo::IOLoop::Stream->new($stderr);
+   my $id_stderr = $loop->stream($stderr_stream);
+	$stderr_stream->on(error => 
+      sub { _error_cb($self, $pid, $loop,$id_stderr,$_[1]) });
+	$stderr_stream->on(close => 
+      sub { _hup_cb($self, $pid, $loop,$id_stderr) });
+	$stderr_stream->on(read  =>
+      sub { _read_cb($self, $pid, $loop,$id_stderr,$_[1]) });
+   $_log->debug("STDERR handle $id_stderr connected.");
+
+   my $stdin_stream = Mojo::IOLoop::Stream->new($stdin);
+   my $id_stdin = $loop->stream($stdin_stream);
+	$stdin_stream->on(error => 
+      sub { _error_cb($self, $pid, $loop,$id_stdin,$_[1]) });
+	$stdin_stream->on(close => 
+      sub { _hup_cb($self, $pid, $loop,$id_stdin) });
+   #$stdin_stream->on(read  =>
+   #   sub { _read_cb($self, $pid, $loop,$id_stdin,@_) });
+   $_log->debug("STDIN handle $id_stdin connected.");
+
 	{ 
 		no warnings;
 		$_log->debug("[process $pid]: handles: stdin=$id_stdin, stdout=$id_stdout, stderr=$id_stderr");
@@ -931,9 +940,10 @@ sub _spawn {
 	$io_timeout++;
 	
 	# apply stdio timeouts
-	$loop->connection_timeout($id_stdout, $io_timeout);
-	$loop->connection_timeout($id_stderr, $io_timeout);
-	$loop->connection_timeout($id_stdin, $io_timeout);
+   $stderr_stream->timeout($io_timeout);
+   $stdout_stream->timeout($io_timeout);
+   $stdin_stream->timeout($io_timeout);
+   #$loop->connection_timeout($id_stdin, $io_timeout);
 	$_log->debug("[process $pid]: stdio stream timeout set to $io_timeout seconds.");
 
 	# save loop fd ids
@@ -946,6 +956,10 @@ sub _spawn {
 
 	# register signal handler...
 	$self->_watch_pid($pid);
+
+	$stdin_stream->start();
+	$stdout_stream->start();
+	$stderr_stream->start();
 
 	return $pid;
 }
@@ -1026,7 +1040,7 @@ sub _dropHandle {
 	my ($self, $pid, $loop, $id) = @_;
 
 	# drop handle...
-	$loop->drop($id);
+	$loop->remove($id);
 
 	# get process structure
 	my $proc = $self->_getProcStruct($pid);
@@ -1139,7 +1153,7 @@ sub _timeout_cb {
 
 	# drop timer (can't hurt...)
 	if (defined $proc->{id_timeout}) {
-		$self->ioloop()->drop($proc->{id_timeout});
+		$self->ioloop()->remove($proc->{id_timeout});
 		$proc->{id_timeout} = undef;
 	}
 
@@ -1186,6 +1200,7 @@ sub _getProcStruct {
 	my $err = "[process $pid]: Unable to get process data structure: ";
 	unless (defined $pid) {
 		$self->{_error} = $err . "Undefined pid.";
+      #$_log->warn('no proc struct for undefined pid '.$pid);
 		return undef;
 	}
 	unless (exists($self->{_data}->{$pid})
@@ -1296,7 +1311,7 @@ sub _procCleanup {
 	if (defined $proc->{id_timeout}) {
 		$_log->debug(
 			"[process $pid]: Removing timeout handler $proc->{id_timeout}.");
-		$self->ioloop()->drop($proc->{id_timeout});
+		$self->ioloop()->remove($proc->{id_timeout});
 		$proc->{id_timeout} = undef;
 	}
 
@@ -1306,7 +1321,7 @@ sub _procCleanup {
 
 sub _watch_pid {
 	my ($self, $pid) = @_;
-	my $w = $self->ioloop()->iowatcher();
+	my $w = $self->ioloop()->reactor();
 	
 	if (defined $w && blessed $w) {
 		# get process structure
@@ -1315,12 +1330,12 @@ sub _watch_pid {
 		
 		# AnyEvent?
 		no warnings;
-		if ($w->isa('Mojo::IOWatcher::AnyEvent') && defined $AnyEvent::MODEL) {
+		if ($w->isa('Mojo::Reactor::AnyEvent') && defined $AnyEvent::MODEL) {
 			$_log->debug("Installing AnyEvent child handler for pid $pid.");
 			$self->{w_chld} = AE::child($pid, sub { $self->_sigchld_handler_ae(@_) });
 		}
-		# EV iowatcher?
-		elsif ($w->isa('Mojo::IOWatcher::EV')) {
+		# EV reactor?
+		elsif ($w->isa('Mojo::Reactor::EV')) {
 			$_log->debug("Installing EV child handler for pid $pid.");
 			$self->{w_chld} = EV::child($pid, 0, sub { $self->_sigchld_handler_ev(@_) });
 		}
@@ -1329,15 +1344,15 @@ sub _watch_pid {
 
 sub _sigchld_handler_install {
 	my $self = shift;
-	my $w = $self->ioloop()->iowatcher();
+	my $w = $self->ioloop()->reactor();
 	
 	my $install = 0;
 
 	if (defined $w && blessed $w) {
-		if ($w->isa('Mojo::IOWatcher::EV')) {
+		if ($w->isa('Mojo::Reactor::EV')) {
 			# nope, this one is smart as hell
 		}
-		elsif ($w->isa('Mojo::IOWatcher::AnyEvent') && defined $AnyEvent::MODEL) {
+		elsif ($w->isa('Mojo::Reactor::AnyEvent') && defined $AnyEvent::MODEL) {
 			# nope, this one is also smart as hell
 		} else {
 			$install = 1;
@@ -1357,7 +1372,7 @@ sub _sigchld_handler_install {
 		$SIG{'CHLD'} = sub { $self->_sigchld_handler_simple(@_) }
 	} else {
 		$_log->debug(
-			"Not installig any signal handler, because IOWatcher implementation " .
+			"Not installig any signal handler, because Reactor implementation " .
 			ref($w) . " implements better CHLD signal handling."
 		);
 	}

@@ -55,6 +55,7 @@ $e->ioloop()->start();
 
 ok $a > 1 && $a < 6, 'Complex sub data ok';
 ok ! defined $res_ex, 'Exception is undefined.';
+diag "\$a: $a\n\n Exception: $res_ex\n\n" if defined $res_ex;
 
 $pid = $e->spawn_sub(
 	sub {

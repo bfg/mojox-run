@@ -1,5 +1,7 @@
 Revision history for MojoX-Run
 
+	Various Mojolicious IOLoop compatibility fixes
+
 0.15
 	added method spawn_sub (we're now depending on Storable)
 	updated pod

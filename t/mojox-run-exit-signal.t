@@ -13,6 +13,7 @@ my ($ex_stats, $i);
 for my $elem (@$arr) {
     my $pid = $run->spawn(
         cmd => sub {
+            sleep 1;
             print $elem;
             exit 0;
         },
@@ -25,5 +26,8 @@ for my $elem (@$arr) {
     );
 }
 $run->ioloop->start;
+
+# One day these sleeps won't be required
+sleep 2;
 
 is( $ex_stats, "0000000", "exit childs with code_ref" );
