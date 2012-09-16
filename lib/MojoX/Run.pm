@@ -171,7 +171,8 @@ sub DESTROY {
 		}
 
 		# fire exit callbacks (if any)
-		$self->_checkIfComplete($pid, 1);
+#		$self->_checkIfComplete($pid, 1);
+# Disable it for now, should only be called for parent (NIS, 2012-09-16)
 
 		# remove struct
 		delete($self->{_data}->{$pid});

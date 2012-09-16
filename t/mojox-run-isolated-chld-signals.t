@@ -7,37 +7,43 @@ use Test::More tests => 2;
 
 my $run = MojoX::Run->new;
             
-my $logpath = 't/exitcb.log';
-unlink $logpath if -e $logpath;
-my $cmd_logpath = 't/cmd.log';
-unlink $cmd_logpath if -e $cmd_logpath;
+my $exit_logpath   = 't/exitcb.log';
+my $cmd_logpath    = 't/cmd.log';
+my $parent_logpath = 't/parent.log';
+foreach ($exit_logpath, $cmd_logpath, $parent_logpath) {
+    unlink $_ if -e $_;
+}
+
 use Mojo::Log;
+$| = 1;
 
 my @elements = qw(aa bb cc);
+
+my $parentlog = Mojo::Log->new(path => $parent_logpath, level => 'debug');
+$parentlog->debug("[parent] has pid $$");
 
 my $i = 0;
 for my $elem (@elements) {
     my $pid = $run->spawn(
         cmd => sub {
-            my $cmdlog = Mojo::Log->new(path => $cmd_logpath, level => 'info');
-            $cmdlog->info("$$, elem $elem");
+            sleep 1;
+            my $cmdlog = Mojo::Log->new(path => $cmd_logpath, level => 'debug');
+            $cmdlog->debug("[child] $$, elem $elem");
             exit 0;
         },
         exit_cb => sub {
             my ($pid, $res) = @_;
-            my $exitlog = Mojo::Log->new(path => $logpath, level => 'info');
-            $exitlog->info("pid $$, on $elem");
-            
-            #why?
-            #$run->ioloop->stop if ++$i == scalar @elements;
+            my $exitlog = Mojo::Log->new(path => $exit_logpath, level => 'debug');
+            $exitlog->debug("[whoknows] me $$, pid $pid, on $elem");
         },
     );
+    $parentlog->debug("[parent] child has $pid for elem $elem");
 }
 $run->ioloop->start;
 
 use Mojo::Util qw/slurp/;
-my @exits= split "\n", slurp($logpath);
+my @exits= split "\n", slurp($exit_logpath);
 my @cmds = split "\n", slurp($cmd_logpath);
 
-is(@cmds, 3, 'cmd called thrice in child processes.');
-is(@exits, 3, 'exit_cb called thrice in parent process.');
+is(scalar @cmds, 3, 'cmd called thrice in child processes.');
+is(scalar @exits, 3, 'exit_cb called thrice in parent process.');
